@@ -44,10 +44,8 @@ def generate_identity(directory: str | Path, display_name: str, capabilities: li
         raise FileExistsError("identity files already exist; refusing to overwrite keys")
     with private_path.open("xb") as key_file:
         key_file.write(private_raw)
-    try:
+    if os.name != "nt":
         os.chmod(private_path, 0o600)
-    except OSError:
-        pass
     card = {
         "protocol": "OIX",
         "protocol_version": "0.1",
