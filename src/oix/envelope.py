@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import json
+import secrets
 import time
 import uuid
-import secrets
 from typing import Any
 
+from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 
 from .canonical import canonical_json
@@ -83,8 +85,12 @@ def verify_message(envelope: dict[str, Any], public_key: bytes, *, now: int | No
         if body.get("sender") != fingerprint(public_key):
             return False
         current = int(time.time()) if now is None else now
-        if (not isinstance(body.get("issued_at"), int) or isinstance(body["issued_at"], bool)
-                or not isinstance(body.get("expires_at"), int) or isinstance(body["expires_at"], bool)):
+        if (
+            not isinstance(body.get("issued_at"), int)
+            or isinstance(body["issued_at"], bool)
+            or not isinstance(body.get("expires_at"), int)
+            or isinstance(body["expires_at"], bool)
+        ):
             return False
         if body["issued_at"] > current + 60 or body["expires_at"] < current:
             return False
@@ -94,7 +100,7 @@ def verify_message(envelope: dict[str, Any], public_key: bytes, *, now: int | No
             _unb64(envelope["signature"]), canonical_json(body)
         )
         return True
-    except Exception:
+    except (InvalidSignature, ValueError, KeyError, TypeError, binascii.Error):
         return False
 
 
