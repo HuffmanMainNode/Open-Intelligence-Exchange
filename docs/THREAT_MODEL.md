@@ -44,6 +44,10 @@ Allow independently operated agents to exchange bounded, verifiable data while k
 4. **Content boundary:** signed payloads remain untrusted content.
 5. **Evidence boundary:** a content hash establishes integrity relative to a digest, not truth.
 
+## Key custody limitation
+
+The v0.1 reference implementation writes the Ed25519 private key as raw, unencrypted bytes and applies owner-only POSIX permissions where supported. This is for local experimentation only. Protect the containing directory and host, use encrypted storage, and never commit or sync private keys to public repositories. Password-based key encryption and rotation are not implemented.
+
 ## Required deployment controls
 
 A networked deployment should add authenticated TLS, strict request timeouts, connection and message rate limits, durable atomic replay storage, key rotation/revocation procedures, structured audit logs, resource quotas, and operator approval for consequential actions. Bind local development listeners to loopback by default. Do not expose a debug relay to the public internet.
