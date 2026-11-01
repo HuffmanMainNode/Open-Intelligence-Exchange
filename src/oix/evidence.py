@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 STATUSES = {"observed", "verified", "unverified", "disputed", "unknown"}
@@ -27,7 +27,7 @@ def make_evidence(
         "evidence_id": "sha256:" + hashlib.sha256(content).hexdigest(),
         "content_sha256": hashlib.sha256(content).hexdigest(),
         "source_uri": source_uri,
-        "collected_at": datetime.now(timezone.utc).isoformat(),
+        "collected_at": datetime.now(UTC).isoformat(),
         "source_timestamp": source_timestamp,
         "collector_id": collector_id,
         "collector_version": collector_version,
