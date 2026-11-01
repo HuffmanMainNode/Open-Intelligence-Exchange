@@ -39,7 +39,11 @@ def generate_identity(directory: str | Path, display_name: str, capabilities: li
         serialization.Encoding.Raw, serialization.PublicFormat.Raw
     )
     private_path = path / "private.key"
-    private_path.write_bytes(private_raw)
+    card_path = path / "agent-card.json"
+    if private_path.exists() or card_path.exists():
+        raise FileExistsError("identity files already exist; refusing to overwrite keys")
+    with private_path.open("xb") as key_file:
+        key_file.write(private_raw)
     try:
         os.chmod(private_path, 0o600)
     except OSError:
