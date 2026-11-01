@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import json
 import os
 from pathlib import Path
 from typing import Any
 
+from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 
@@ -87,5 +89,5 @@ def verify_card(signed_card: dict[str, Any]) -> bool:
             _unb64(signed_card["signature"]), canonical_json(card)
         )
         return True
-    except Exception:
+    except (InvalidSignature, ValueError, KeyError, TypeError, binascii.Error):
         return False
