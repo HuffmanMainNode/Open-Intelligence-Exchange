@@ -37,6 +37,8 @@ ruff check .
 bandit -q -r src
 ```
 
+Private-key note: private.key is stored unencrypted with owner-only permissions on POSIX systems. Protect the directory, do not sync it to public storage, and use encrypted disk or a secret manager for sensitive deployments. Key encryption and rotation workflows are not implemented yet.
+
 Create an identity:
 
 ```bash
