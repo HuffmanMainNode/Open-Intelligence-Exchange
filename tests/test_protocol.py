@@ -6,7 +6,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from oix.canonical import canonical_json
 from oix.envelope import create_message, verify_message
 from oix.evidence import make_evidence
-from oix.identity import generate_identity, load_card, load_private_key, verify_card
+from oix.identity import generate_identity, load_card, verify_card
 from oix.handshake import negotiate
 from oix.policy import CapabilityPolicy
 from oix.replay import ReplayCache
