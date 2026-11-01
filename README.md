@@ -14,7 +14,7 @@ OIX is not a chatbot, hosted agent, model, or mandatory network. It is a small i
 |---|---|
 | Deterministic message encoding | Restricted canonical JSON; rejects floats and non-JSON values |
 | Agent identity | Ed25519 keypair, public-key fingerprint, signed agent card |
-| Message integrity | Ed25519 signatures over canonical envelope bytes |
+| Message integrity | Ed25519 signatures over canonical message-body bytes |
 | Replay defense | Bounded in-memory nonce cache with expiry |
 | Authorization | Explicit capability allow-list |
 | Evidence records | Provenance fields, content hashes, evidence status |
