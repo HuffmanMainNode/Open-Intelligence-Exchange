@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "open-intelligence-exchange"
+version = "0.1.0"
+description = "Open, decentralized message and evidence exchange primitives for independent agents"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [{ name = "Open Intelligence Exchange contributors" }]
+dependencies = ["cryptography>=42.0.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0", "ruff>=0.5.0", "bandit>=1.7.9"]
+
+[project.scripts]
+oix = "oix.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.bandit]
+exclude_dirs = ["tests"]
