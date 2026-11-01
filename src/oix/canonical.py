@@ -13,10 +13,10 @@ from typing import Any
 def _normalize(value: Any, depth: int = 0) -> Any:
     if depth > 32:
         raise ValueError("maximum JSON nesting depth exceeded")
-    if value is None or isinstance(value, bool) or isinstance(value, int):
+    if value is None or isinstance(value, (bool, int)):
         return value
     if isinstance(value, float):
-        raise ValueError("floating-point values are not allowed in OIX canonical JSON")
+        raise TypeError("floating-point values are not allowed in OIX canonical JSON")
     if isinstance(value, str):
         return unicodedata.normalize("NFC", value)
     if isinstance(value, list):
