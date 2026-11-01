@@ -29,7 +29,7 @@ def _normalize(value: Any, depth: int = 0) -> Any:
         normalized: dict[str, Any] = {}
         for key, item in value.items():
             if not isinstance(key, str):
-                raise ValueError("JSON object keys must be strings")
+                raise TypeError("JSON object keys must be strings")
             key = unicodedata.normalize("NFC", key)
             if key in normalized:
                 raise ValueError("duplicate key after Unicode normalization")
