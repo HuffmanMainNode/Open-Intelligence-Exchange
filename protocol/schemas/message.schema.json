@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://huffmanmainnode.github.io/Open-Intelligence-Exchange/schemas/message.schema.json",
+  "title": "OIX v0.1 signed envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["body", "signature"],
+  "properties": {
+    "signature": {"type": "string", "minLength": 80, "maxLength": 100},
+    "body": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol", "version", "message_id", "sender", "recipient", "type", "issued_at", "expires_at", "nonce", "requested_capability", "payload"],
+      "properties": {
+        "protocol": {"const": "OIX"},
+        "version": {"const": "0.1"},
+        "message_id": {"type": "string", "format": "uuid"},
+        "sender": {"type": "string", "pattern": "^ed25519:[0-9a-f]{64}$"},
+        "recipient": {"type": "string", "minLength": 1, "maxLength": 256},
+        "type": {"enum": ["agent.hello", "agent.hello_ack", "task.request", "task.accepted", "task.progress", "task.result", "evidence.submit", "error"]},
+        "issued_at": {"type": "integer", "minimum": 0},
+        "expires_at": {"type": "integer", "minimum": 1},
+        "nonce": {"type": "string", "minLength": 20, "maxLength": 128},
+        "requested_capability": {"type": ["string", "null"], "maxLength": 128},
+        "payload": {"type": "object"}
+      }
+    }
+  }
+}
