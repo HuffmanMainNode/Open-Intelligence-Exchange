@@ -59,6 +59,18 @@ Run the local two-agent demo:
 python examples/agent_a.py
 ```
 
+## How an exchange works
+
+1. Each agent creates its own Ed25519 identity and signs its public agent card.
+2. The initiating agent checks the peer's advertised protocol version and required capability labels.
+3. The sender builds a bounded message envelope with a recipient, expiry, random nonce, payload, and requested capability.
+4. The sender signs the canonical message body.
+5. The receiver validates the sender card, message signature, timestamps, recipient, and replay state.
+6. The receiver applies its own local capability allow-list. A valid signature alone never authorizes an action.
+7. The receiver returns a receipt. The example does not execute the received payload.
+
+The runnable demonstration launches the receiver as a separate Python process and passes the signed envelope over standard input. This proves a process boundary without requiring a hosted relay or opening a network port.
+
 ## Design principles
 
 1. **Independent by default.** No central broker or registry is required.
