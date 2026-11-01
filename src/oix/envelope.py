@@ -68,14 +68,23 @@ def verify_message(envelope: dict[str, Any], public_key: bytes, *, now: int | No
         if len(canonical_json(envelope)) > MAX_MESSAGE_BYTES:
             return False
         body = envelope["body"]
-        if body["protocol"] != "OIX" or body["version"] != "0.1":
+        if not isinstance(body, dict) or not isinstance(body.get("payload"), dict):
             return False
-        if body["type"] not in ALLOWED_TYPES:
+        if body.get("protocol") != "OIX" or body.get("version") != "0.1":
             return False
-        if body["sender"] != fingerprint(public_key):
+        if body.get("type") not in ALLOWED_TYPES:
+            return False
+        if not isinstance(body.get("recipient"), str) or not body["recipient"]:
+            return False
+        if not isinstance(body.get("message_id"), str) or not isinstance(body.get("nonce"), str):
+            return False
+        if not 20 <= len(body["nonce"]) <= 128:
+            return False
+        if body.get("sender") != fingerprint(public_key):
             return False
         current = int(time.time()) if now is None else now
-        if not isinstance(body["issued_at"], int) or not isinstance(body["expires_at"], int):
+        if (not isinstance(body.get("issued_at"), int) or isinstance(body["issued_at"], bool)
+                or not isinstance(body.get("expires_at"), int) or isinstance(body["expires_at"], bool)):
             return False
         if body["issued_at"] > current + 60 or body["expires_at"] < current:
             return False
