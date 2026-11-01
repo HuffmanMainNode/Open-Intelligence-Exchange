@@ -59,7 +59,8 @@ def test_evidence_hash_and_status():
         b"public source content", source_uri="https://example.org/advisory",
         collector_id="test-collector", collector_version="1.0", method="HTTP GET",
     )
-    assert item["content_sha256"].startswith("sha256:") is False
+    assert len(item["content_sha256"]) == 64
+    assert item["evidence_id"] == "sha256:" + item["content_sha256"]
     assert item["status"] == "observed"
     with pytest.raises(ValueError):
         make_evidence(b"x", source_uri="x", collector_id="c", collector_version="1",
