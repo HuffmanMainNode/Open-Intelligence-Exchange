@@ -14,7 +14,7 @@ from oix.replay import ReplayCache
 
 def test_canonical_json_is_stable_and_rejects_float():
     assert canonical_json({"b": 2, "a": "x"}) == b'{"a":"x","b":2}'
-    with pytest.raises(ValueError):
+    with pytest.raises(TypeError):
         canonical_json({"unsafe": 1.25})
 
 
