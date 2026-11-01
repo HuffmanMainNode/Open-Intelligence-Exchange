@@ -7,6 +7,7 @@ from oix.canonical import canonical_json
 from oix.envelope import create_message, verify_message
 from oix.evidence import make_evidence
 from oix.identity import generate_identity, load_card, load_private_key, verify_card
+from oix.handshake import negotiate
 from oix.policy import CapabilityPolicy
 from oix.replay import ReplayCache
 
@@ -63,3 +64,24 @@ def test_evidence_hash_and_status():
     with pytest.raises(ValueError):
         make_evidence(b"x", source_uri="x", collector_id="c", collector_version="1",
                       method="m", status="trusted")
+
+
+
+def test_handshake_negotiates_version_and_capabilities():
+    card = {"card": {"protocol_version": "0.1", "agent_id": "agent:test",
+                     "capabilities": ["public.research", "evidence.review"]}}
+    result = negotiate(["0.1"], card, {"evidence.review"})
+    assert result["accepted"] is True
+    assert result["version"] == "0.1"
+    assert result["capabilities"] == ["evidence.review"]
+    assert negotiate(["0.2"], card)["accepted"] is False
+    denied = negotiate(["0.1"], card, {"filesystem.write"})
+    assert denied["reason"] == "missing_capabilities"
+
+
+def test_identity_generation_refuses_to_overwrite_private_key(tmp_path):
+    generate_identity(tmp_path, "First Agent", [])
+    original = (tmp_path / "private.key").read_bytes()
+    with pytest.raises(FileExistsError):
+        generate_identity(tmp_path, "Replacement Agent", [])
+    assert (tmp_path / "private.key").read_bytes() == original
