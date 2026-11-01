@@ -45,7 +45,7 @@ class SQLiteReplayCache:
         if not isinstance(nonce, str) or not 20 <= len(nonce) <= 128:
             raise ValueError("nonce must contain between 20 and 128 characters")
         if not isinstance(expires_at, int) or isinstance(expires_at, bool):
-            raise ValueError("expires_at must be an integer timestamp")
+            raise TypeError("expires_at must be an integer timestamp")
         if expires_at < current:
             return False
 
