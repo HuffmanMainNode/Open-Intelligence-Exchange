@@ -1,0 +1,88 @@
+"""Ed25519 agent identity and signed agent cards."""
+from __future__ import annotations
+
+import base64
+import hashlib
+import json
+import os
+from pathlib import Path
+from typing import Any
+
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
+
+from .canonical import canonical_json
+
+SCHEME = "ed25519"
+
+
+def _b64(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
+
+
+def _unb64(value: str) -> bytes:
+    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+
+
+def fingerprint(public_key: bytes) -> str:
+    return "ed25519:" + hashlib.sha256(public_key).hexdigest()
+
+
+def generate_identity(directory: str | Path, display_name: str, capabilities: list[str]) -> dict[str, Any]:
+    path = Path(directory)
+    path.mkdir(parents=True, exist_ok=True)
+    private = Ed25519PrivateKey.generate()
+    private_raw = private.private_bytes(
+        serialization.Encoding.Raw, serialization.PrivateFormat.Raw, serialization.NoEncryption()
+    )
+    public_raw = private.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw
+    )
+    private_path = path / "private.key"
+    private_path.write_bytes(private_raw)
+    try:
+        os.chmod(private_path, 0o600)
+    except OSError:
+        pass
+    card = {
+        "protocol": "OIX",
+        "protocol_version": "0.1",
+        "agent_id": fingerprint(public_raw),
+        "display_name": display_name,
+        "public_key": _b64(public_raw),
+        "key_algorithm": SCHEME,
+        "capabilities": sorted(set(capabilities)),
+    }
+    signature = private.sign(canonical_json(card))
+    signed = {"card": card, "signature": _b64(signature)}
+    (path / "agent-card.json").write_text(
+        json.dumps(signed, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    return signed
+
+
+def load_private_key(directory: str | Path) -> Ed25519PrivateKey:
+    raw = (Path(directory) / "private.key").read_bytes()
+    if len(raw) != 32:
+        raise ValueError("invalid Ed25519 private key length")
+    return Ed25519PrivateKey.from_private_bytes(raw)
+
+
+def load_card(path: str | Path) -> dict[str, Any]:
+    return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def verify_card(signed_card: dict[str, Any]) -> bool:
+    card = signed_card["card"]
+    public_raw = _unb64(card["public_key"])
+    if fingerprint(public_raw) != card["agent_id"]:
+        return False
+    try:
+        Ed25519PublicKey.from_public_bytes(public_raw).verify(
+            _unb64(signed_card["signature"]), canonical_json(card)
+        )
+    except (ValueError, KeyError):
+        return False
+    except Exception:
+        return False
+    return True
