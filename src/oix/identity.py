@@ -55,9 +55,8 @@ def generate_identity(directory: str | Path, display_name: str, capabilities: li
     }
     signature = private.sign(canonical_json(card))
     signed = {"card": card, "signature": _b64(signature)}
-    (path / "agent-card.json").write_text(
-        json.dumps(signed, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-    )
+    with card_path.open("x", encoding="utf-8") as card_file:
+        card_file.write(json.dumps(signed, indent=2, ensure_ascii=False) + "\n")
     return signed
 
 
@@ -73,16 +72,18 @@ def load_card(path: str | Path) -> dict[str, Any]:
 
 
 def verify_card(signed_card: dict[str, Any]) -> bool:
-    card = signed_card["card"]
-    public_raw = _unb64(card["public_key"])
-    if fingerprint(public_raw) != card["agent_id"]:
-        return False
     try:
+        card = signed_card["card"]
+        public_raw = _unb64(card["public_key"])
+        if len(public_raw) != 32 or fingerprint(public_raw) != card["agent_id"]:
+            return False
+        if card.get("protocol") != "OIX" or card.get("protocol_version") != "0.1":
+            return False
+        if card.get("key_algorithm") != SCHEME or not isinstance(card.get("capabilities"), list):
+            return False
         Ed25519PublicKey.from_public_bytes(public_raw).verify(
             _unb64(signed_card["signature"]), canonical_json(card)
         )
-    except (ValueError, KeyError):
-        return False
+        return True
     except Exception:
         return False
-    return True
