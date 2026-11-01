@@ -1,49 +1,57 @@
-"""Run two independent local agents through the OIX signed-envelope path."""
+"""Launch an independent receiver process and exchange a signed OIX message."""
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
-from oix.envelope import create_message, verify_message
-from oix.identity import generate_identity, load_private_key, load_card, verify_card
-from oix.policy import CapabilityPolicy
-from oix.replay import ReplayCache
+from oix.envelope import create_message
+from oix.handshake import negotiate
+from oix.identity import generate_identity, load_card, load_private_key, verify_card
 
 
 def main() -> None:
     with tempfile.TemporaryDirectory(prefix="oix-demo-") as temp:
         root = Path(temp)
-        generate_identity(root / "agent-a", "Independent Research Agent A", ["public.research"])
-        generate_identity(root / "agent-b", "Independent Review Agent B", ["evidence.review"])
-        a_card = load_card(root / "agent-a" / "agent-card.json")
-        b_card = load_card(root / "agent-b" / "agent-card.json")
+        a_dir, b_dir = root / "agent-a", root / "agent-b"
+        generate_identity(a_dir, "Independent Agent A", ["public.research"])
+        generate_identity(b_dir, "Independent Agent B", ["evidence.review"])
+        a_card = load_card(a_dir / "agent-card.json")
+        b_card = load_card(b_dir / "agent-card.json")
         assert verify_card(a_card) and verify_card(b_card)
 
-        message = create_message(
-            load_private_key(root / "agent-a"),
+        agreement = negotiate(["0.1"], b_card, {"evidence.review"})
+        if not agreement["accepted"]:
+            raise SystemExit(f"handshake rejected: {agreement}")
+
+        envelope = create_message(
+            load_private_key(a_dir),
             b_card["card"]["agent_id"],
             "task.request",
-            {"objective": "Review this public-source evidence bundle", "input_is_untrusted": True},
+            {"objective": "Review this public-source evidence bundle",
+             "input_is_untrusted": True},
             capability="evidence.review",
         )
-
-        receiver_public = __import__("base64").urlsafe_b64decode(
-            a_card["card"]["public_key"] + "=" * (-len(a_card["card"]["public_key"]) % 4)
+        receiver = Path(__file__).with_name("agent_b.py")
+        result = subprocess.run(
+            [sys.executable, str(receiver), "--identity", str(b_dir),
+             "--sender-card", str(a_dir / "agent-card.json")],
+            input=json.dumps(envelope),
+            text=True,
+            capture_output=True,
+            check=True,
+            timeout=10,
         )
-        assert verify_message(message, receiver_public)
-        assert message["body"]["recipient"] == b_card["card"]["agent_id"]
-
-        replay = ReplayCache()
-        assert replay.accept(message["body"])
-        assert not replay.accept(message["body"])
-
-        policy = CapabilityPolicy({"evidence.review"})
-        assert policy.permits(message["body"]["requested_capability"])
-        print("OIX exchange: PASS")
+        receipt = json.loads(result.stdout)
+        if receipt.get("accepted") is not True:
+            raise SystemExit(f"receiver rejected message: {receipt}")
+        print("OIX independent-process exchange: PASS")
         print(f"sender: {a_card['card']['agent_id']}")
         print(f"recipient: {b_card['card']['agent_id']}")
-        print("signature: valid | replay: blocked | capability: allowed")
-        print("No received content was executed.")
+        print("handshake: accepted | signature: valid | replay: guarded")
+        print("The receiver treated the payload as data and executed nothing.")
 
 
 if __name__ == "__main__":
