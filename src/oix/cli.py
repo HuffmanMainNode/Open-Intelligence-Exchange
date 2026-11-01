@@ -5,8 +5,6 @@ import argparse
 import json
 from pathlib import Path
 
-from cryptography.hazmat.primitives import serialization
-
 from .envelope import create_message, verify_message, write_message
 from .identity import generate_identity, load_card, load_private_key, verify_card
 
@@ -63,9 +61,6 @@ def main() -> None:
         card_data = load_card(args.public_key)
         if not verify_card(card_data):
             raise SystemExit("INVALID: sender agent card")
-        public_raw = serialization.load_der_public_key(
-            serialization.Encoding.DER + b""
-        ) if False else None
         import base64
         public_raw = base64.urlsafe_b64decode(
             card_data["card"]["public_key"] + "=" * (-len(card_data["card"]["public_key"]) % 4)
