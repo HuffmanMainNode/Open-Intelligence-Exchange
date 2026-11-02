@@ -37,7 +37,7 @@ ruff check .
 bandit -q -r src
 ```
 
-Private-key note: private.key is stored unencrypted with owner-only permissions on POSIX systems. Protect the directory, do not sync it to public storage, and use encrypted disk or a secret manager for sensitive deployments. Key encryption and rotation workflows are not implemented yet.
+Private-key note: `private.key` is stored unencrypted and is created with owner-only POSIX mode `0600`; the containing directory is created with mode `0700` when newly created. Windows does not enforce POSIX mode bits. Protect the directory, do not sync it to public storage, and use encrypted disk or a secret manager for sensitive deployments. Key encryption and rotation workflows are not implemented yet.
 
 Create an identity:
 
@@ -66,7 +66,7 @@ python examples/agent_a.py
 3. The sender builds a bounded message envelope with a recipient, expiry, random nonce, payload, and requested capability.
 4. The sender signs the canonical message body.
 5. The receiver validates the sender card, message signature, timestamps, recipient, and replay state.
-6. The receiver applies its own local capability allow-list. A valid signature alone never authorizes an action.
+6. The receiver applies its own local capability allow-list. `task.request` and `evidence.submit` require an explicit requested capability. A valid signature alone never authorizes an action.
 7. The receiver returns a receipt. The example does not execute the received payload.
 
 The runnable demonstration launches the receiver as a separate Python process and passes the signed envelope over standard input. This proves a process boundary without requiring a hosted relay or opening a network port.
