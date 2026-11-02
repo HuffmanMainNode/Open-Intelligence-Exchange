@@ -124,6 +124,16 @@ def load_encryption_private_key(directory: str | Path) -> X25519PrivateKey:
     return X25519PrivateKey.from_private_bytes(raw)
 
 
+def encryption_key_fingerprint(certificate: dict[str, Any]) -> str:
+    """Return the SHA-256 fingerprint of the certified X25519 public key."""
+    if not isinstance(certificate, dict) or not isinstance(certificate.get("body"), dict):
+        raise SecureEnvelopeError("encryption certificate is malformed")
+    public_raw = _unb64(certificate["body"].get("public_key"))
+    if len(public_raw) != 32:
+        raise SecureEnvelopeError("certified X25519 public key must contain 32 bytes")
+    return hashlib.sha256(public_raw).hexdigest()
+
+
 def verify_encryption_certificate(
     certificate: dict[str, Any],
     signing_public_key: bytes,
