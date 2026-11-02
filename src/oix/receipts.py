@@ -27,6 +27,7 @@ def create_delivery_receipt(
     acknowledged_content_digest: str,
     *,
     accepted_at: int,
+    now: int | None = None,
 ) -> dict[str, Any]:
     """Create a signed receipt after the exact transport payload is durably stored."""
     if not isinstance(acknowledged_message_id, str) or not acknowledged_message_id:
@@ -48,6 +49,7 @@ def create_delivery_receipt(
             "durable": True,
             "status": "accepted",
         },
+        now=now,
     )
 
 
