@@ -6,7 +6,6 @@ forward was delivered. Hop counts are advisory metadata, not a security boundary
 """
 from __future__ import annotations
 
-import hashlib
 import os
 import re
 import sqlite3
@@ -14,7 +13,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .canonical import canonical_json
 from .discovery import verify_announcement
 from .discovery_exchange import (
     ExchangeError,
@@ -237,7 +235,7 @@ def plan_gossip_forwarding(
     if not isinstance(hop_count, int) or isinstance(hop_count, bool) or hop_count < 0:
         raise GossipError("hop_count must be a non-negative integer")
     try:
-        records, _ = inspect_exchange_batch(batch, now=now)
+        records, digest = inspect_exchange_batch(batch, now=now)
     except ExchangeError as exc:
         raise GossipError(str(exc)) from exc
     if hop_count >= policy.max_hops:
@@ -257,7 +255,6 @@ def plan_gossip_forwarding(
         raise GossipError("no verified records available for forwarding")
     # Preserve the original batch identifier and digest across relay hops.
     # Repackaging would generate a fresh UUID and defeat duplicate suppression.
-    digest = hashlib.sha256(canonical_json(batch["exchange"])).hexdigest()
     candidates = [
         peer for peer in operator_approved_peer_ids
         if peer != inbound_peer_id
