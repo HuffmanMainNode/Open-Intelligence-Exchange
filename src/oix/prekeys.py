@@ -17,7 +17,7 @@ from contextlib import closing
 from pathlib import Path
 from typing import Any
 
-from cryptography.exceptions import InvalidTag
+from cryptography.exceptions import InvalidSignature, InvalidTag
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PrivateKey,
@@ -183,15 +183,8 @@ def verify_prekey_bundle(
             _unb64(bundle["signature"]), canonical_json(body)
         )
         return True
-    except (ValueError, TypeError, KeyError, InvalidTag, binascii.Error):
+    except (ValueError, TypeError, KeyError, InvalidSignature, binascii.Error):
         return False
-    except Exception as exc:
-        # InvalidSignature is intentionally handled without exposing parser details.
-        from cryptography.exceptions import InvalidSignature
-        if isinstance(exc, InvalidSignature):
-            return False
-        raise
-
 
 def encrypt_prekey_envelope(
     envelope: dict[str, Any],
@@ -276,7 +269,8 @@ class SQLitePreKeyStore:
             else:
                 os.close(descriptor)
         with closing(self._connect()) as db:
-            db.execute("PRAGMA journal_mode=WAL")
+            db.execute("PRAGMA journal_mode=DELETE")
+            db.execute("PRAGMA secure_delete=ON")
             db.execute("""
                 CREATE TABLE IF NOT EXISTS one_time_prekeys (
                     key_id TEXT PRIMARY KEY,
@@ -292,6 +286,7 @@ class SQLitePreKeyStore:
         db = sqlite3.connect(self.database, timeout=5)
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA busy_timeout=5000")
+        db.execute("PRAGMA secure_delete=ON")
         return db
 
     def add_prekeys(
