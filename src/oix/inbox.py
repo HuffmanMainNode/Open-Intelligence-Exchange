@@ -192,6 +192,25 @@ class SQLiteInbox:
             db.commit()
         return bool(changed)
 
+    def trusted_peer_public_key(self, agent_id: str) -> bytes:
+        """Resolve an explicitly trusted peer's verified Ed25519 public key."""
+        if not isinstance(agent_id, str) or not agent_id:
+            raise UntrustedPeerError("peer agent ID is required")
+        with closing(self._connect()) as db:
+            row = db.execute(
+                "SELECT signed_card_json FROM trusted_peers WHERE agent_id=?",
+                (agent_id,),
+            ).fetchone()
+        if row is None:
+            raise UntrustedPeerError("sender is not in the local trusted-peer store")
+        try:
+            signed_card = json.loads(row["signed_card_json"])
+            if self._validate_card(signed_card) != agent_id:
+                raise UntrustedPeerError("stored trusted card is invalid")
+            return _unb64(signed_card["card"]["public_key"])
+        except (TypeError, ValueError, KeyError) as exc:
+            raise UntrustedPeerError("stored trusted card is invalid") from exc
+
     def receive(
         self,
         envelope: dict[str, Any],
