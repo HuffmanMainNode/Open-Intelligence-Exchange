@@ -96,3 +96,10 @@ Do not expose a network listener until key custody, rotation/revocation, forward
 ## Validation
 
 `tests/test_secure_transport.py` covers a full signed-message round trip, ciphertext/header tampering, wrong recipient, wrong sender key, invalid certificates, certificate expiry, delayed decryption after certificate expiry, key-file permissions, and overwrite protection. GitHub Actions runs the suite on Python 3.11, 3.12, and 3.13.
+
+
+## Encrypted outbound task results
+
+`SQLiteResultPublisher.encrypt_approved()` can wrap an already-signed, operator-approved `task.result` for the original requesting peer. It verifies that the recipient X25519 certificate is signed by the Ed25519 identity bound to the original request sender, then persists the encrypted wrapper and recipient key fingerprint. `pending_secure_delivery()` exposes only persisted encrypted wrappers. Repeated calls using the same recipient key reuse the exact stored wrapper. The original signed message ID remains unchanged if the same result is re-encrypted after a peer key rotation.
+
+Use `pending_delivery()` only for local plaintext inspection. Future network transports must consume `pending_secure_delivery()` and authenticate a recipient acknowledgement before recording delivery.
