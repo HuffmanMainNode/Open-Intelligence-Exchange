@@ -125,3 +125,6 @@ The sender verifies:
 `SQLiteResultPublisher.mark_delivered()` now requires this verified receipt and persists the receipt alongside the delivery state. A bare transport callback, matching message ID, or unsigned acknowledgement cannot mark a result delivered. The receipt proves the peer identity signed an assertion of durable acceptance; it is not independent proof of storage hardware, continued availability, or human review.
 
 No network transport is implemented in this phase.
+
+
+For callers that want the local key lifecycle policy enforced at encryption time, use `SQLitePeerKeyStore.encrypt_for_peer()` instead of passing a certificate directly to the low-level `encrypt_envelope()` primitive. The store selects only the currently active, non-expired certificate for the exact trusted recipient identity and refuses encryption after local revocation.
