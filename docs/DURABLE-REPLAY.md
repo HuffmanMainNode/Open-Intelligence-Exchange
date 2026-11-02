@@ -14,3 +14,4 @@ if not accepted:
 ```
 
 Share one SQLite database only among processes on a suitable local filesystem. For multi-host deployments, use a transactional shared datastore and preserve the same uniqueness semantics. The cache does not replace signature, expiry, recipient, or capability validation.
+\n\nThe reference identity writer creates the private key with `os.open(..., O_CREAT | O_EXCL | O_WRONLY, 0o600)` on POSIX systems. Windows does not enforce POSIX mode bits; protect the containing directory and host accordingly.
