@@ -192,8 +192,19 @@ class SQLiteInbox:
             db.commit()
         return bool(changed)
 
-    def receive(self, envelope: dict[str, Any], *, now: int | None = None) -> InboxReceipt:
-        """Validate and durably accept one envelope without executing its payload."""
+    def receive(
+        self,
+        envelope: dict[str, Any],
+        *,
+        now: int | None = None,
+        connection: sqlite3.Connection | None = None,
+    ) -> InboxReceipt:
+        """Validate and durably accept one envelope without executing its payload.
+
+        When a caller supplies an existing SQLite connection, all inbox writes
+        participate in that caller's transaction. This enables atomic
+        one-time-prekey consumption and inbox acceptance in the same database.
+        """
         current = int(time.time()) if now is None else now
         if not isinstance(envelope, dict) or set(envelope) != {"body", "signature"}:
             raise InboxError("message envelope has an invalid shape")
@@ -239,89 +250,108 @@ class SQLiteInbox:
         if not self.policy.permits(capability, message_type=message_type):
             raise InboxError("requested capability is not allowed by local policy")
 
+        owns_connection = connection is None
+        if owns_connection:
+            with closing(self._connect()) as db:
+                return self._receive_validated(
+                    db, envelope, body, sender, message_id, message_type,
+                    capability, encoded_envelope, current, manage_transaction=True,
+                )
+        return self._receive_validated(
+            connection, envelope, body, sender, message_id, message_type,
+            capability, encoded_envelope, current, manage_transaction=False,
+        )
+
+    def _receive_validated(
+        self,
+        db: sqlite3.Connection,
+        envelope: dict[str, Any],
+        body: dict[str, Any],
+        sender: str,
+        message_id: str,
+        message_type: str,
+        capability: str | None,
+        encoded_envelope: bytes,
+        current: int,
+        *,
+        manage_transaction: bool,
+    ) -> InboxReceipt:
         digest = hashlib.sha256(encoded_envelope).hexdigest()
         body_json = canonical_json(body).decode("utf-8")
         envelope_json = encoded_envelope.decode("utf-8")
-        work_id: str | None = None
-        work_status: str | None = None
-
-        with closing(self._connect()) as db:
+        if manage_transaction:
             db.execute("BEGIN IMMEDIATE")
-            peer_row = db.execute(
-                "SELECT signed_card_json FROM trusted_peers WHERE agent_id=?", (sender,)
-            ).fetchone()
-            if peer_row is None:
-                db.rollback()
-                raise UntrustedPeerError("sender is not in the local trusted-peer store")
-            signed_card = json.loads(peer_row["signed_card_json"])
-            if self._validate_card(signed_card) != sender:
-                db.rollback()
-                raise UntrustedPeerError("stored trusted card is invalid")
-            public_key = _unb64(signed_card["card"]["public_key"])
-            if not verify_for_recipient(
-                envelope, public_key, self.local_agent_id, now=current
-            ):
-                db.rollback()
-                raise InboxError("signature, sender, recipient, or validity check failed")
+        peer_row = db.execute(
+            "SELECT signed_card_json FROM trusted_peers WHERE agent_id=?", (sender,)
+        ).fetchone()
+        if peer_row is None:
+            raise UntrustedPeerError("sender is not in the local trusted-peer store")
+        signed_card = json.loads(peer_row["signed_card_json"])
+        if self._validate_card(signed_card) != sender:
+            raise UntrustedPeerError("stored trusted card is invalid")
+        public_key = _unb64(signed_card["card"]["public_key"])
+        if not verify_for_recipient(
+            envelope, public_key, self.local_agent_id, now=current
+        ):
+            raise InboxError("signature, sender, recipient, or validity check failed")
 
-            prior = db.execute(
-                """SELECT content_sha256 FROM inbox_messages
-                   WHERE sender=? AND message_id=?""",
+        prior = db.execute(
+            """SELECT content_sha256 FROM inbox_messages
+               WHERE sender=? AND message_id=?""",
+            (sender, message_id),
+        ).fetchone()
+        if prior is not None:
+            if prior["content_sha256"] != digest:
+                raise InboxConflictError("message_id was reused with different content")
+            existing_work = db.execute(
+                "SELECT work_id,status FROM inbound_work WHERE sender=? AND message_id=?",
                 (sender, message_id),
             ).fetchone()
-            if prior is not None:
-                if prior["content_sha256"] != digest:
-                    db.rollback()
-                    raise InboxConflictError("message_id was reused with different content")
-                existing_work = db.execute(
-                    "SELECT work_id,status FROM inbound_work WHERE sender=? AND message_id=?",
-                    (sender, message_id),
-                ).fetchone()
+            if manage_transaction:
                 db.commit()
-                return InboxReceipt(
-                    sender, message_id, message_type, True,
-                    existing_work["work_id"] if existing_work else None,
-                    existing_work["status"] if existing_work else None,
-                )
+            return InboxReceipt(
+                sender, message_id, message_type, True,
+                existing_work["work_id"] if existing_work else None,
+                existing_work["status"] if existing_work else None,
+            )
 
-            nonce_row = db.execute(
-                "SELECT message_id FROM inbox_messages WHERE sender=? AND nonce=?",
-                (sender, body["nonce"]),
-            ).fetchone()
-            if nonce_row is not None:
-                db.rollback()
-                raise ReplayError("sender nonce has already been accepted")
+        nonce_row = db.execute(
+            "SELECT message_id FROM inbox_messages WHERE sender=? AND nonce=?",
+            (sender, body["nonce"]),
+        ).fetchone()
+        if nonce_row is not None:
+            raise ReplayError("sender nonce has already been accepted")
 
+        db.execute(
+            """INSERT INTO inbox_messages(
+                sender,message_id,nonce,message_type,content_sha256,body_json,
+                envelope_json,received_at
+            ) VALUES(?,?,?,?,?,?,?,?)""",
+            (
+                sender, message_id, body["nonce"], message_type, digest,
+                body_json, envelope_json, current,
+            ),
+        )
+        work_id: str | None = None
+        work_status: str | None = None
+        if message_type in {"task.request", "evidence.submit"}:
+            work_id = str(uuid.uuid4())
+            work_status = (
+                "pending_approval" if message_type == "task.request" else "pending_review"
+            )
             db.execute(
-                """INSERT INTO inbox_messages(
-                    sender,message_id,nonce,message_type,content_sha256,body_json,
-                    envelope_json,received_at
+                """INSERT INTO inbound_work(
+                    work_id,sender,message_id,work_type,capability,payload_json,
+                    status,created_at
                 ) VALUES(?,?,?,?,?,?,?,?)""",
                 (
-                    sender, message_id, body["nonce"], message_type, digest,
-                    body_json, envelope_json, current,
+                    work_id, sender, message_id, message_type, capability,
+                    canonical_json(body["payload"]).decode("utf-8"), work_status, current,
                 ),
             )
-            if message_type in {"task.request", "evidence.submit"}:
-                work_id = str(uuid.uuid4())
-                work_status = (
-                    "pending_approval" if message_type == "task.request" else "pending_review"
-                )
-                db.execute(
-                    """INSERT INTO inbound_work(
-                        work_id,sender,message_id,work_type,capability,payload_json,
-                        status,created_at
-                    ) VALUES(?,?,?,?,?,?,?,?)""",
-                    (
-                        work_id, sender, message_id, message_type, capability,
-                        canonical_json(body["payload"]).decode("utf-8"), work_status, current,
-                    ),
-                )
+        if manage_transaction:
             db.commit()
-
-        return InboxReceipt(
-            sender, message_id, message_type, False, work_id, work_status
-        )
+        return InboxReceipt(sender, message_id, message_type, False, work_id, work_status)
 
     def pending_work(self, *, limit: int = 100) -> list[dict[str, Any]]:
         if not 1 <= limit <= 1000:
