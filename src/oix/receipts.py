@@ -66,6 +66,16 @@ def verify_delivery_receipt(
         return False
     body = receipt.get("body", {})
     payload = body.get("payload", {})
+    if not isinstance(body, dict) or set(body) != {
+        "protocol", "version", "message_id", "sender", "recipient", "type",
+        "issued_at", "expires_at", "nonce", "requested_capability", "payload",
+    }:
+        return False
+    if not isinstance(payload, dict) or set(payload) != {
+        "acknowledged_message_id", "acknowledged_content_digest",
+        "accepted_at", "durable", "status",
+    }:
+        return False
     return (
         body.get("type") == "delivery.receipt"
         and body.get("sender") == expected_recipient_agent_id
