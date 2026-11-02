@@ -2,7 +2,10 @@ import copy
 
 import pytest
 
-from oix.discovery import SQLiteDiscoveryStore, create_announcement
+from oix.discovery import (
+    SQLiteDiscoveryStore,
+    create_announcement,
+)
 from oix.discovery_exchange import (
     MAX_EXCHANGE_BYTES,
     ExchangeError,
@@ -85,12 +88,16 @@ def test_batch_shape_protocol_clock_and_limits_are_enforced(tmp_path):
         inspect_exchange_batch(altered, now=NOW + 1)
     with pytest.raises(ExchangeError, match="1 to"):
         create_exchange_batch([], now=NOW)
+    altered = copy.deepcopy(batch)
+    altered["exchange"]["batch_id"] = "not-a-uuid"
+    with pytest.raises(ExchangeError, match="canonical UUID"):
+        inspect_exchange_batch(altered, now=NOW + 1)
 
 
 def test_batch_size_is_bounded(tmp_path):
     record = signed_record(tmp_path, "Peer")
-    record["padding"] = "x" * MAX_EXCHANGE_BYTES
-    with pytest.raises(ExchangeError, match="exactly announcement"):
+    record["card"] = {"padding": "x" * MAX_EXCHANGE_BYTES}
+    with pytest.raises(ExchangeError, match="byte limit"):
         create_exchange_batch([record], now=NOW)
 
 
