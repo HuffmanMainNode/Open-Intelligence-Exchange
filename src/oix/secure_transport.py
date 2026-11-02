@@ -16,7 +16,7 @@ from typing import Any
 
 from cryptography.exceptions import InvalidSignature, InvalidTag
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 from cryptography.hazmat.primitives.asymmetric.x25519 import (
     X25519PrivateKey,
     X25519PublicKey,
@@ -35,7 +35,7 @@ _CERTIFICATE_FIELDS = {
 }
 _HEADER_FIELDS = {
     "protocol", "version", "sender", "recipient",
-    "recipient_key_fingerprint", "ephemeral_public_key", "nonce",
+    "recipient_key_fingerprint", "ephemeral_public_key", "nonce", "issued_at",
 }
 MAX_SECURE_ENVELOPE_BYTES = 1_100_000
 MAX_CERTIFICATE_TTL = 2_592_000
@@ -69,8 +69,11 @@ def generate_encryption_key(
     """Create a separate X25519 key and an Ed25519-signed public-key certificate."""
     if not 1 <= ttl_seconds <= MAX_CERTIFICATE_TTL:
         raise ValueError("ttl_seconds must be between 1 and 2592000")
-    if not hasattr(signing_private_key, "sign") or not hasattr(signing_private_key, "public_key"):
-        raise TypeError("signing_private_key must be an Ed25519 private key")
+    if not isinstance(signing_private_key, Ed25519PrivateKey):
+        raise TypeError("signing_private_key must be an Ed25519PrivateKey")
+    timestamp = int(time.time()) if now is None else now
+    if not isinstance(timestamp, int) or isinstance(timestamp, bool) or timestamp < 0:
+        raise ValueError("now must be a non-negative integer timestamp")
     path = Path(directory)
     path.mkdir(parents=True, exist_ok=True, mode=0o700)
     if os.name == "posix":
@@ -91,9 +94,6 @@ def generate_encryption_key(
     descriptor = os.open(private_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     with os.fdopen(descriptor, "wb") as stream:
         stream.write(private_raw)
-    timestamp = int(time.time()) if now is None else now
-    if not isinstance(timestamp, int) or isinstance(timestamp, bool) or timestamp < 0:
-        raise ValueError("now must be a non-negative integer timestamp")
     body = {
         "protocol": "OIX",
         "version": SECURE_VERSION,
@@ -205,6 +205,9 @@ def encrypt_envelope(
     sender = body.get("sender")
     recipient = body.get("recipient")
     recipient_id = recipient_certificate["body"]["agent_id"]
+    issued_at = int(time.time()) if now is None else now
+    if not isinstance(issued_at, int) or isinstance(issued_at, bool) or issued_at < 0:
+        raise SecureEnvelopeError("now must be a non-negative integer timestamp")
     if not isinstance(sender, str) or not sender:
         raise SecureEnvelopeError("inner OIX sender is required")
     if recipient != recipient_id:
@@ -229,6 +232,7 @@ def encrypt_envelope(
         "recipient_key_fingerprint": recipient_key_fingerprint,
         "ephemeral_public_key": _b64(ephemeral_public_raw),
         "nonce": _b64(nonce),
+        "issued_at": issued_at,
     }
     key = _derive_key(
         ephemeral_private.exchange(recipient_public),
@@ -254,17 +258,27 @@ def decrypt_envelope(
     now: int | None = None,
 ) -> dict[str, Any]:
     """Decrypt, authenticate, and validate the exact recipient and inner sender."""
-    if not verify_encryption_certificate(
-        recipient_certificate, recipient_signing_public_key, now=now
-    ):
-        raise SecureEnvelopeError("local encryption certificate is invalid or expired")
     if not isinstance(secure_envelope, dict) or set(secure_envelope) != {"header", "ciphertext"}:
         raise SecureEnvelopeError("encrypted envelope has an invalid shape")
+    if len(canonical_json(secure_envelope)) > MAX_SECURE_ENVELOPE_BYTES:
+        raise SecureEnvelopeError("encrypted envelope exceeds the 1.1 MB limit")
     header = secure_envelope["header"]
     if not isinstance(header, dict) or set(header) != _HEADER_FIELDS:
         raise SecureEnvelopeError("encrypted envelope header has an invalid shape")
     if header["protocol"] != "OIX" or header["version"] != SECURE_VERSION:
         raise SecureEnvelopeError("unsupported secure envelope protocol version")
+    current = int(time.time()) if now is None else now
+    issued_at = header["issued_at"]
+    if (
+        not isinstance(issued_at, int)
+        or isinstance(issued_at, bool)
+        or issued_at > current + 60
+    ):
+        raise SecureEnvelopeError("encrypted envelope timestamp is invalid")
+    if not verify_encryption_certificate(
+        recipient_certificate, recipient_signing_public_key, now=issued_at
+    ):
+        raise SecureEnvelopeError("local encryption certificate was not valid when message was created")
     if header["recipient"] != local_agent_id:
         raise SecureEnvelopeError("encrypted envelope is addressed to another agent")
     if header["sender"] != fingerprint(sender_signing_public_key):
@@ -285,8 +299,6 @@ def decrypt_envelope(
     ciphertext = _unb64(secure_envelope["ciphertext"])
     if len(ephemeral_raw) != 32 or len(nonce) != 12:
         raise SecureEnvelopeError("invalid ephemeral key or AEAD nonce length")
-    if len(canonical_json(secure_envelope)) > MAX_SECURE_ENVELOPE_BYTES:
-        raise SecureEnvelopeError("encrypted envelope exceeds the 1.1 MB limit")
     key = _derive_key(
         recipient_private_key.exchange(X25519PublicKey.from_public_bytes(ephemeral_raw)),
         header["sender"],
