@@ -107,6 +107,7 @@ class SQLiteInbox:
                     message_type TEXT NOT NULL,
                     content_sha256 TEXT NOT NULL,
                     body_json TEXT NOT NULL,
+                    envelope_json TEXT NOT NULL,
                     received_at INTEGER NOT NULL,
                     PRIMARY KEY(sender, message_id),
                     UNIQUE(sender, nonce)
@@ -201,7 +202,8 @@ class SQLiteInbox:
             raise InboxError("message body fields do not match OIX v0.1")
         if not isinstance(body.get("payload"), dict):
             raise InboxError("message payload must be an object")
-        if body.get("type") not in ALLOWED_TYPES:
+        message_type = body.get("type")
+        if not isinstance(message_type, str) or message_type not in ALLOWED_TYPES:
             raise InboxError("unsupported message type")
         message_id = body.get("message_id")
         try:
@@ -209,8 +211,14 @@ class SQLiteInbox:
                 raise ValueError
         except (ValueError, AttributeError) as exc:
             raise InboxError("message_id must be a canonical UUID") from exc
-        if len(canonical_json(envelope)) > MAX_MESSAGE_BYTES:
+        try:
+            encoded_envelope = canonical_json(envelope)
+        except (TypeError, ValueError, RecursionError) as exc:
+            raise InboxError("message is outside the OIX JSON data model") from exc
+        if len(encoded_envelope) > MAX_MESSAGE_BYTES:
             raise InboxError("message exceeds the 1 MB limit")
+        if not isinstance(current, int) or isinstance(current, bool):
+            raise ValueError("now must be an integer Unix timestamp")
         if (
             not isinstance(body.get("issued_at"), int)
             or isinstance(body["issued_at"], bool)
@@ -223,7 +231,6 @@ class SQLiteInbox:
         sender = body.get("sender")
         if not isinstance(sender, str) or not sender:
             raise InboxError("sender is required")
-        message_type = body["type"]
         capability = body.get("requested_capability")
         if capability is not None and (
             not isinstance(capability, str) or not 1 <= len(capability) <= 128
@@ -232,8 +239,9 @@ class SQLiteInbox:
         if not self.policy.permits(capability, message_type=message_type):
             raise InboxError("requested capability is not allowed by local policy")
 
-        digest = hashlib.sha256(canonical_json(envelope)).hexdigest()
+        digest = hashlib.sha256(encoded_envelope).hexdigest()
         body_json = canonical_json(body).decode("utf-8")
+        envelope_json = encoded_envelope.decode("utf-8")
         work_id: str | None = None
         work_status: str | None = None
 
@@ -286,9 +294,13 @@ class SQLiteInbox:
 
             db.execute(
                 """INSERT INTO inbox_messages(
-                    sender,message_id,nonce,message_type,content_sha256,body_json,received_at
-                ) VALUES(?,?,?,?,?,?,?)""",
-                (sender, message_id, body["nonce"], message_type, digest, body_json, current),
+                    sender,message_id,nonce,message_type,content_sha256,body_json,
+                    envelope_json,received_at
+                ) VALUES(?,?,?,?,?,?,?,?)""",
+                (
+                    sender, message_id, body["nonce"], message_type, digest,
+                    body_json, envelope_json, current,
+                ),
             )
             if message_type in {"task.request", "evidence.submit"}:
                 work_id = str(uuid.uuid4())
