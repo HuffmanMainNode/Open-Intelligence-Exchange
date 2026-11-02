@@ -83,6 +83,10 @@ See [Mutual-TLS Transport](docs/MUTUAL-TLS-TRANSPORT.md) for the experimental TC
 
 The runnable demonstration launches the receiver as a separate Python process and passes the signed envelope over standard input. This proves a process boundary without requiring a hosted relay or opening a network port.
 
+## Durable inbox review
+
+The optional `SQLiteInbox` persists `task.request` and `evidence.submit` messages in a durable, operator-gated work queue. `pending_work()` lists items awaiting review, `decide_work()` records the operator's one-way decision, and `get_work(work_id)` reads back the durable decision and exact message provenance for downstream integrations. Reading a decision never approves, executes, or dispatches work.
+
 ## Design principles
 
 1. **Independent by default.** No central broker or registry is required.
