@@ -50,7 +50,7 @@ Required body fields:
 - `requested_capability`: capability label or null
 - `payload`: JSON object
 
-Defined message types: `agent.hello`, `agent.hello_ack`, `task.request`, `task.accepted`, `task.progress`, `task.result`, `evidence.submit`, `error`.
+Defined message types: `agent.hello`, `agent.hello_ack`, `task.request`, `task.accepted`, `task.progress`, `task.result`, `evidence.submit`, `error`, `delivery.receipt`.
 
 Implementations MUST reject unknown protocol versions and message types, malformed signatures, expired messages, messages issued more than 60 seconds in the future, and envelopes larger than 1,000,000 canonical bytes. Senders MUST use TTLs from 1 to 86,400 seconds. Receivers MUST independently reject envelopes whose `expires_at - issued_at` is outside that same range.
 
@@ -98,7 +98,34 @@ OIX is designed to map to existing agent and tool ecosystems. MCP provides a too
 
 ## 11. Security considerations
 
-See [THREAT_MODEL.md](../docs/THREAT_MODEL.md) and [SECURITY.md](../SECURITY.md). v0.1 does not provide key revocation distribution, forward secrecy, encrypted payloads, or a production transport. Durable local replay storage is available through `SQLiteReplayCache`, but it does not provide multi-host coordination. Do not treat a signed message as confidential.
+See [THREAT_MODEL.md](../docs/THREAT_MODEL.md) and [SECURITY.md](../SECURITY.md). The core v0.1 signed message is not confidential by itself. Optional versioned secure-envelope extensions provide authenticated encryption. The static-recipient wrapper does not provide forward secrecy. The one-time-prekey extension reduces later key-compromise exposure when consumed private keys are securely erased, but storage snapshots and backups may retain key material. Peer key rotation and revocation are local operator-controlled operations, not distributed revocation. No production network transport is included.
 
 
 The Python library exposes `verify_for_recipient(...)` to combine signature/validity checks with an exact local-recipient check. Callers that use `verify_message(...)` directly must check the recipient themselves.
+
+## 12. Secure transport extensions (version 1.0)
+
+The reference implementation provides optional transport wrappers around an already-signed v0.1 message. These wrappers do not change the signed inner message contract.
+
+### 12.1 Static-recipient secure envelope
+
+The static-recipient wrapper uses ephemeral-sender X25519 key agreement, HKDF-SHA256, and ChaCha20-Poly1305. The recipient's X25519 public key is bound to its trusted Ed25519 identity by a signed, time-bounded certificate. This mode does not provide forward secrecy against later compromise of the recipient's static X25519 private key.
+
+### 12.2 One-time-prekey envelope
+
+A recipient may publish a signed, time-bounded bundle of one-time X25519 public keys. A sender verifies the bundle against the recipient's trusted Ed25519 identity, selects one key, and encrypts with a fresh ephemeral sender key. The receiver authenticates and decrypts the envelope, verifies the inner Ed25519 message, and atomically consumes the corresponding private prekey.
+
+A receiver MUST:
+1. Validate the signed prekey bundle before use and enforce the bundle expiry and key-count bounds.
+2. Bind the encrypted envelope to the exact recipient, sender identity, prekey ID, ephemeral public key, nonce, and issue time using authenticated encryption.
+3. Serialize consumption so concurrent deliveries cannot use the same prekey successfully.
+4. Delete the one-time private key only after successful AEAD authentication and inner-message verification.
+5. Preserve the prekey after failed authentication so unauthenticated ciphertext cannot burn a key.
+
+The forward-secrecy benefit depends on secure deletion and absence of recoverable copies in backups, snapshots, logs, or storage remnants. Implementations SHOULD protect the local prekey database with encrypted storage and restrict filesystem permissions. Prekey bundle distribution and replenishment are out of scope for this transport-independent phase.
+
+### 12.3 Durable delivery receipt
+
+A `delivery.receipt` is an Ed25519-signed OIX message. It binds the acknowledged logical message ID to the SHA-256 digest of the exact encrypted transport envelope. A sender MUST verify the trusted recipient signature, expected route, message ID, digest, and receipt validity before recording delivery. The receipt is an authenticated peer assertion of durable acceptance, not proof of continued availability or physical storage guarantees.
+
+The reference library provides these cryptographic and local persistence primitives only. It does not open sockets, discover peers, distribute bundles, or claim remote delivery.
