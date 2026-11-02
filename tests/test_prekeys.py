@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -35,7 +34,7 @@ def _pair(tmp_path):
 
 
 def test_signed_one_time_prekey_bundle_encrypts_and_consumes_once(tmp_path):
-    sender_key, sender_id, recipient_key, recipient_id, store, bundle, message, now = _pair(tmp_path)
+    sender_key, _sender_id, recipient_key, recipient_id, store, bundle, message, now = _pair(tmp_path)
     assert verify_prekey_bundle(bundle, recipient_key.public_key().public_bytes_raw(), now=now)
     assert store.available_count(now=now) == 4
     assert all("private_key" not in key for key in bundle["body"]["keys"])
@@ -106,7 +105,7 @@ def test_wrong_sender_or_recipient_cannot_consume_prekey(tmp_path):
 
 
 def test_expired_or_wrongly_signed_prekey_bundle_is_rejected(tmp_path):
-    _, _, recipient_key, recipient_id, store, bundle, message, now = _pair(tmp_path)
+    _, _, recipient_key, _recipient_id, _store, bundle, message, now = _pair(tmp_path)
     wrong_key, _, _ = _agent(tmp_path, "wrong")
     assert not verify_prekey_bundle(
         bundle, wrong_key.public_key().public_bytes_raw(), now=now
@@ -125,7 +124,7 @@ def test_expired_or_wrongly_signed_prekey_bundle_is_rejected(tmp_path):
 
 
 def test_prekey_created_before_expiry_can_decrypt_after_bundle_expiry(tmp_path):
-    sender_key, _, recipient_key, recipient_id, store, _, _, now = _pair(tmp_path)
+    sender_key, _, recipient_key, recipient_id, _store, _, _, now = _pair(tmp_path)
     short_store = SQLitePreKeyStore(tmp_path / "short-prekeys.sqlite3")
     bundle = create_prekey_bundle(short_store, recipient_key, count=1, ttl_seconds=60, now=now)
     message = create_message(sender_key, recipient_id, "agent.hello", {})
