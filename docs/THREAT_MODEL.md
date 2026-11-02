@@ -30,7 +30,9 @@ Allow independently operated agents to exchange bounded, verifiable data while k
 | Replay | In-memory cache for demos; SQLiteReplayCache for durable local storage | CLI and demo use in-memory cache; SQLite does not solve multi-host coordination |
 | Expired/future messages | Timestamp checks and bounded TTL | Clock synchronization is an operator concern |
 | Capability escalation | Separate local allow-list policy; task requests and evidence submissions require an explicit capability label | Capability labels are not enforcement inside downstream adapters |
-| Oversized payload | 1 MB envelope limit; canonical depth/member limits | Transport-level limits must also be configured |
+| Oversized payload | 1 MB encrypted-envelope cap; discovery relay rejects frames above 512 KiB before reading bodies; canonical JSON and timeouts | Deployment-level connection and network quotas remain operator responsibilities |
+| Discovery relay impersonation | Mutual TLS, CA validation, exact OIX URI SAN identity binding, and explicit approved-relay allow-list | CA enrollment, rotation/revocation, and trust-root custody remain operator responsibilities |
+| Discovery poisoning | Nested signed announcements/cards are independently verified; relayed subjects remain `discovered_untrusted` | Signatures prove key control, not intelligence truth or operator identity |
 | Prompt injection | Treat payload as untrusted data; no automatic execution | Downstream model integrations must preserve this boundary |
 | Malicious code delivery | Core never executes payloads | Host application must not add unsafe execution |
 | False evidence claims | Provenance fields and explicit status vocabulary | Hashes do not prove truth or source authenticity |

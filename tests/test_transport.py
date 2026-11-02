@@ -11,6 +11,8 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
+from oix.discovery import SQLiteDiscoveryStore, create_announcement
+from oix.discovery_exchange import create_exchange_batch
 from oix.envelope import create_message
 from oix.identity import generate_identity, load_private_key
 from oix.inbox import SQLiteInbox
@@ -18,11 +20,13 @@ from oix.policy import CapabilityPolicy
 from oix.prekeys import SQLitePreKeyStore, create_prekey_bundle, encrypt_prekey_envelope
 from oix.transport import (
     MAX_FRAME_BYTES,
+    OIXDiscoveryExchangeServer,
     OIXMutualTLSServer,
     TransportError,
     agent_identity_uri,
     encode_frame,
     read_frame,
+    send_discovery_exchange,
     send_encrypted_envelope,
     send_encrypted_stream,
 )
@@ -431,6 +435,130 @@ def test_stream_rejects_mismatched_message_id_list_before_connecting():
                 local_agent_id="a",
                 expected_peer_agent_id="b",
                 expected_peer_signing_public_key=b"",
+            )
+
+    asyncio.run(run())
+
+
+def test_mutual_tls_discovery_exchange_accepts_only_approved_relay(tmp_path):
+    async def run():
+        relay_dir = tmp_path / "relay"
+        receiver_dir = tmp_path / "receiver"
+        subject_dir = tmp_path / "subject"
+        relay_card = generate_identity(relay_dir, "Approved Relay", ["public.research"])
+        receiver_card = generate_identity(receiver_dir, "Discovery Receiver", ["public.research"])
+        subject_card = generate_identity(subject_dir, "Discovered Agent", ["public.research"])
+        relay_id = relay_card["card"]["agent_id"]
+        receiver_id = receiver_card["card"]["agent_id"]
+        subject_key = load_private_key(subject_dir)
+        now = int(datetime.now(UTC).timestamp())
+        server_tls, client_tls = _tls_contexts(tmp_path, receiver_id, relay_id)
+
+        store = SQLiteDiscoveryStore(tmp_path / "discovery.sqlite3")
+        server = OIXDiscoveryExchangeServer(store, {relay_id})
+        host, port = await server.start(ssl_context=server_tls)
+        try:
+            announcement = create_announcement(
+                subject_key,
+                subject_card,
+                ["https://subject.example.org/oix"],
+                sequence=1,
+                now=now,
+            )
+            batch = create_exchange_batch(
+                [{"announcement": announcement, "card": subject_card}],
+                now=now,
+            )
+            result = await send_discovery_exchange(
+                batch,
+                host=host,
+                port=port,
+                server_hostname="localhost",
+                ssl_context=client_tls,
+                expected_peer_agent_id=receiver_id,
+            )
+            assert result["tls_peer_agent_id"] == receiver_id
+            assert result["accepted_count"] == 1
+            assert result["rejected_count"] == 0
+            peers = store.active(now=now + 1)
+            assert len(peers) == 1
+            assert peers[0]["agent_id"] == subject_card["card"]["agent_id"]
+            assert peers[0]["trust_state"] == "discovered_untrusted"
+        finally:
+            await server.close()
+
+    asyncio.run(run())
+
+
+def test_mutual_tls_discovery_exchange_rejects_unapproved_relay(tmp_path):
+    async def run():
+        approved_dir = tmp_path / "approved"
+        impostor_dir = tmp_path / "impostor"
+        receiver_dir = tmp_path / "receiver"
+        subject_dir = tmp_path / "subject"
+        approved_card = generate_identity(approved_dir, "Approved Relay", ["public.research"])
+        receiver_card = generate_identity(receiver_dir, "Discovery Receiver", ["public.research"])
+        subject_card = generate_identity(subject_dir, "Discovered Agent", ["public.research"])
+        receiver_id = receiver_card["card"]["agent_id"]
+        approved_id = approved_card["card"]["agent_id"]
+        impostor_id = generate_identity(
+            impostor_dir, "Unapproved Relay", ["public.research"]
+        )["card"]["agent_id"]
+        subject_key = load_private_key(subject_dir)
+        now = int(datetime.now(UTC).timestamp())
+        server_tls, impostor_tls = _tls_contexts(tmp_path, receiver_id, impostor_id)
+
+        store = SQLiteDiscoveryStore(tmp_path / "discovery.sqlite3")
+        server = OIXDiscoveryExchangeServer(store, {approved_id})
+        host, port = await server.start(ssl_context=server_tls)
+        try:
+            announcement = create_announcement(
+                subject_key,
+                subject_card,
+                ["https://subject.example.org/oix"],
+                sequence=1,
+                now=now,
+            )
+            batch = create_exchange_batch(
+                [{"announcement": announcement, "card": subject_card}],
+                now=now,
+            )
+            with pytest.raises(TransportError):
+                await send_discovery_exchange(
+                    batch,
+                    host=host,
+                    port=port,
+                    server_hostname="localhost",
+                    ssl_context=impostor_tls,
+                    expected_peer_agent_id=receiver_id,
+                )
+            assert store.active(now=now + 1) == []
+        finally:
+            await server.close()
+
+    asyncio.run(run())
+
+
+def test_discovery_transport_rejects_invalid_relay_configuration(tmp_path):
+    store = SQLiteDiscoveryStore(tmp_path / "discovery.sqlite3")
+    with pytest.raises(ValueError, match="canonical approved relay"):
+        OIXDiscoveryExchangeServer(store, {"not-an-agent-id"})
+    with pytest.raises(ValueError, match="unique"):
+        OIXDiscoveryExchangeServer(
+            store, ["ed25519:" + "1" * 64, "ed25519:" + "1" * 64]
+        )
+
+
+def test_discovery_frame_limit_is_enforced_before_body_read():
+    async def run():
+        from oix.transport import MAX_DISCOVERY_FRAME_BYTES
+
+        reader = asyncio.StreamReader()
+        reader.feed_data((MAX_DISCOVERY_FRAME_BYTES + 1).to_bytes(4, "big"))
+        with pytest.raises(TransportError, match="length"):
+            await read_frame(
+                reader,
+                max_frame_bytes=MAX_DISCOVERY_FRAME_BYTES,
             )
 
     asyncio.run(run())
