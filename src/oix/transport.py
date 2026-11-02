@@ -93,19 +93,16 @@ def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
-async def read_frame(
+async def _decode_frame(
     reader: asyncio.StreamReader,
+    prefix: bytes,
     *,
-    timeout_seconds: float = 10.0,
+    timeout_seconds: float,
 ) -> dict[str, Any]:
-    """Read exactly one bounded canonical JSON frame."""
+    length = int.from_bytes(prefix, "big")
+    if not 1 <= length <= MAX_FRAME_BYTES:
+        raise TransportError("transport frame length is outside the permitted range")
     try:
-        prefix = await asyncio.wait_for(
-            reader.readexactly(FRAME_HEADER_BYTES), timeout_seconds
-        )
-        length = int.from_bytes(prefix, "big")
-        if not 1 <= length <= MAX_FRAME_BYTES:
-            raise TransportError("transport frame length is outside the permitted range")
         payload = await asyncio.wait_for(reader.readexactly(length), timeout_seconds)
         value = json.loads(payload, object_pairs_hook=_unique_object)
         if not isinstance(value, dict) or canonical_json(value) != payload:
@@ -119,6 +116,45 @@ async def read_frame(
         if isinstance(exc, TransportError):
             raise
         raise TransportError("transport frame is malformed") from exc
+
+
+async def read_frame(
+    reader: asyncio.StreamReader,
+    *,
+    timeout_seconds: float = 10.0,
+) -> dict[str, Any]:
+    """Read exactly one bounded canonical JSON frame."""
+    try:
+        prefix = await asyncio.wait_for(
+            reader.readexactly(FRAME_HEADER_BYTES), timeout_seconds
+        )
+    except TimeoutError as exc:
+        raise TransportError("transport frame read timed out") from exc
+    except asyncio.IncompleteReadError as exc:
+        raise TransportError("transport frame was truncated") from exc
+    return await _decode_frame(reader, prefix, timeout_seconds=timeout_seconds)
+
+
+async def _read_stream_frame(
+    reader: asyncio.StreamReader,
+    *,
+    idle_timeout_seconds: float,
+    frame_timeout_seconds: float,
+) -> dict[str, Any] | None:
+    """Read a frame, returning None only for clean idle timeout or clean EOF."""
+    try:
+        prefix = await asyncio.wait_for(
+            reader.readexactly(FRAME_HEADER_BYTES), idle_timeout_seconds
+        )
+    except TimeoutError:
+        return None
+    except asyncio.IncompleteReadError as exc:
+        if not exc.partial:
+            return None
+        raise TransportError("transport frame header was truncated") from exc
+    return await _decode_frame(
+        reader, prefix, timeout_seconds=frame_timeout_seconds
+    )
 
 
 async def write_frame(
