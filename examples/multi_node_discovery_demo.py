@@ -171,7 +171,7 @@ def _node_b_process(
 ) -> None:
     try:
         asyncio.run(_serve_node_b(database, approved_relay_id, cert_paths, ready, stop))
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         ready.put({"ok": False, "error": type(exc).__name__})
         raise
 
