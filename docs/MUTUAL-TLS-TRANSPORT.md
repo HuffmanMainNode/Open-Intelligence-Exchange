@@ -97,3 +97,55 @@ The sender first verifies that the TLS server certificate's OIX URI SAN matches 
 ## Test coverage
 
 The transport test suite covers canonical framing, duplicate-key rejection, malformed and truncated frames, oversized frames, TLS certificate validation, OIX URI SAN identity binding in both directions, rejection of certificate/agent-ID mismatches, loopback-only default binding, multi-message persistent sessions, durable signed receipts, and retry behavior after an acknowledgement is lost.
+
+
+## Signed discovery exchange over mutual TLS (Phase 15)
+
+The same transport module now includes a separate discovery-exchange listener and sender. This is intentionally a different application protocol from the encrypted task-message inbox:
+
+- `OIXDiscoveryExchangeServer` receives one bounded Phase 13 discovery batch per TLS connection.
+- The TLS client certificate must chain to the operator-configured CA and contain exactly one `urn:oix:agent:<agent-id>` URI SAN.
+- The relay agent ID must also be present in the server's explicit `approved_relay_agent_ids` allow-list. A CA-valid certificate alone does not authorize relaying.
+- The discovery payload is capped at the Phase 13 512 KiB limit. The length prefix is rejected before its body is read when it exceeds that limit.
+- Every announcement and signed card is independently verified by the Phase 12 discovery store. Partial acceptance is reported as counts.
+- The response is bound to the exact batch UUID and canonical SHA-256 digest. It is sent over the authenticated TLS session.
+- The transport relay is not the discovered subject. Subjects remain `discovered_untrusted`; this listener never enrolls them, installs keys, authorizes capabilities, or executes tasks.
+
+Example server wiring:
+
+```python
+from oix.discovery import SQLiteDiscoveryStore
+from oix.transport import OIXDiscoveryExchangeServer
+
+store = SQLiteDiscoveryStore("./discovery.sqlite3")
+server = OIXDiscoveryExchangeServer(
+    store,
+    approved_relay_agent_ids={
+        "ed25519:REPLACE_WITH_OPERATOR_APPROVED_RELAY_FINGERPRINT",
+    },
+)
+host, port = await server.start(
+    host="127.0.0.1",
+    port=9444,
+    ssl_context=mutual_tls_server_context,
+)
+```
+
+Example sender call:
+
+```python
+from oix.transport import send_discovery_exchange
+
+ack = await send_discovery_exchange(
+    batch,
+    host="127.0.0.1",
+    port=9444,
+    server_hostname="relay.example.org",
+    ssl_context=mutual_tls_client_context,
+    expected_peer_agent_id="ed25519:REPLACE_WITH_EXPECTED_RELAY_FINGERPRINT",
+)
+```
+
+The host, port, TLS trust roots, certificate identities, and approved relay list are operator configuration. The transport never reads or connects to endpoint hints contained in discovery records. Acknowledgements report ingestion counts, not peer trust or intelligence truth.
+
+This remains experimental. It is a single-receiver TCP adapter, not a full gossip mesh, distributed scheduler, relay directory, NAT traversal system, or availability guarantee. The operator must manage CA issuance, certificate rotation and revocation, network firewalling, and persistent storage.
