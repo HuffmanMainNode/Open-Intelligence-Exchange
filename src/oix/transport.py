@@ -27,6 +27,7 @@ from .prekeys import MAX_PREKEY_ENVELOPE_BYTES, SQLitePreKeyStore
 from .receipts import message_digest, verify_delivery_receipt
 
 MAX_FRAME_BYTES = MAX_PREKEY_ENVELOPE_BYTES
+MAX_STREAM_MESSAGES = 100
 FRAME_HEADER_BYTES = 4
 MIN_TLS_VERSION = ssl.TLSVersion.TLSv1_2
 logger = logging.getLogger(__name__)
@@ -190,7 +191,7 @@ def _require_client_tls(context: ssl.SSLContext) -> None:
 
 
 class OIXMutualTLSServer:
-    """One-frame-per-connection receiver with bounded concurrency and local inbox."""
+    """Persistent bounded OIX session receiver with local inbox and backpressure."""
 
     def __init__(
         self,
@@ -199,7 +200,9 @@ class OIXMutualTLSServer:
         signing_private_key: Ed25519PrivateKey,
         *,
         timeout_seconds: float = 10.0,
+        idle_timeout_seconds: float = 30.0,
         max_concurrent: int = 32,
+        max_messages_per_connection: int = MAX_STREAM_MESSAGES,
     ) -> None:
         if not isinstance(signing_private_key, Ed25519PrivateKey):
             raise TypeError("signing_private_key must be an Ed25519PrivateKey")
@@ -212,12 +215,18 @@ class OIXMutualTLSServer:
             raise ValueError("inbox and prekey store must share one SQLite database")
         if not 0.1 <= timeout_seconds <= 120:
             raise ValueError("timeout_seconds must be between 0.1 and 120")
+        if not 0.1 <= idle_timeout_seconds <= 300:
+            raise ValueError("idle_timeout_seconds must be between 0.1 and 300")
         if not 1 <= max_concurrent <= 1024:
             raise ValueError("max_concurrent must be between 1 and 1024")
+        if not 1 <= max_messages_per_connection <= MAX_STREAM_MESSAGES:
+            raise ValueError(f"max_messages_per_connection must be between 1 and {MAX_STREAM_MESSAGES}")
         self.inbox = inbox
         self.prekey_store = prekey_store
         self.signing_private_key = signing_private_key
         self.timeout_seconds = timeout_seconds
+        self.idle_timeout_seconds = idle_timeout_seconds
+        self.max_messages_per_connection = max_messages_per_connection
         self._semaphore = asyncio.Semaphore(max_concurrent)
         self._server: asyncio.AbstractServer | None = None
 
@@ -260,28 +269,38 @@ class OIXMutualTLSServer:
                 self._semaphore.acquire(), timeout=self.timeout_seconds
             )
             acquired = True
-            secure = await read_frame(reader, timeout_seconds=self.timeout_seconds)
-            header = secure.get("header")
-            if not isinstance(header, dict) or not isinstance(header.get("sender"), str):
-                raise TransportError("encrypted envelope has no sender identity")
-            sender_id = header["sender"]
             tls_peer = writer.get_extra_info("ssl_object")
-            if _certificate_agent_id(tls_peer) != sender_id:
-                raise TransportError("TLS client certificate identity does not match OIX sender")
-            sender_public_key = self.inbox.trusted_peer_public_key(sender_id)
-            _, receipt = await asyncio.to_thread(
-                self.prekey_store.consume_and_acknowledge,
-                secure,
-                self.inbox,
-                self.signing_private_key.public_key().public_bytes_raw(),
-                sender_public_key,
-                self.inbox.local_agent_id,
-                self.signing_private_key,
-            )
-            await write_frame(writer, receipt, timeout_seconds=self.timeout_seconds)
+            certificate_agent_id = _certificate_agent_id(tls_peer)
+            for _ in range(self.max_messages_per_connection):
+                secure = await _read_stream_frame(
+                    reader,
+                    idle_timeout_seconds=self.idle_timeout_seconds,
+                    frame_timeout_seconds=self.timeout_seconds,
+                )
+                if secure is None:
+                    break
+                header = secure.get("header")
+                if not isinstance(header, dict) or not isinstance(header.get("sender"), str):
+                    raise TransportError("encrypted envelope has no sender identity")
+                sender_id = header["sender"]
+                if certificate_agent_id != sender_id:
+                    raise TransportError(
+                        "TLS client certificate identity does not match OIX sender"
+                    )
+                sender_public_key = self.inbox.trusted_peer_public_key(sender_id)
+                _, receipt = await asyncio.to_thread(
+                    self.prekey_store.consume_and_acknowledge,
+                    secure,
+                    self.inbox,
+                    self.signing_private_key.public_key().public_bytes_raw(),
+                    sender_public_key,
+                    self.inbox.local_agent_id,
+                    self.signing_private_key,
+                )
+                await write_frame(writer, receipt, timeout_seconds=self.timeout_seconds)
         except Exception as exc:  # noqa: BLE001
             # Log only the exception class; never disclose parser or cryptographic details.
-            logger.warning("OIX transport request rejected (%s)", type(exc).__name__)
+            logger.warning("OIX transport session rejected (%s)", type(exc).__name__)
         finally:
             if acquired:
                 self._semaphore.release()
@@ -302,34 +321,47 @@ class OIXMutualTLSServer:
             self._server = None
 
 
-async def send_encrypted_envelope(
-    secure_envelope: dict[str, Any],
+async def send_encrypted_stream(
+    secure_envelopes: list[dict[str, Any]],
     *,
+    expected_message_ids: list[str],
     host: str,
     port: int,
     server_hostname: str,
     ssl_context: ssl.SSLContext,
     local_agent_id: str,
     expected_peer_agent_id: str,
-    expected_message_id: str,
     expected_peer_signing_public_key: bytes,
     timeout_seconds: float = 10.0,
-) -> dict[str, Any]:
-    """Send one persisted encrypted envelope and verify the peer's signed receipt.
+) -> list[dict[str, Any]]:
+    """Send multiple persisted encrypted envelopes over one authenticated TLS session.
 
-    The caller owns retry policy and must reuse the exact same encrypted wrapper
-    when retrying. No automatic retry or message re-encryption occurs here.
+    Each envelope is acknowledged before the next is sent, providing natural
+    backpressure. The caller owns retry policy and must reuse each exact
+    persisted encrypted wrapper after a timeout or connection loss.
     """
     _require_client_tls(ssl_context)
     if not 0.1 <= timeout_seconds <= 120:
         raise ValueError("timeout_seconds must be between 0.1 and 120")
-    header = secure_envelope.get("header", {}) if isinstance(secure_envelope, dict) else {}
     if (
-        not isinstance(header, dict)
-        or header.get("sender") != local_agent_id
-        or header.get("recipient") != expected_peer_agent_id
+        not isinstance(secure_envelopes, list)
+        or not 1 <= len(secure_envelopes) <= MAX_STREAM_MESSAGES
+        or not isinstance(expected_message_ids, list)
+        or len(expected_message_ids) != len(secure_envelopes)
     ):
-        raise TransportError("encrypted envelope route does not match requested peer")
+        raise ValueError(
+            f"secure_envelopes and expected_message_ids must be lists of 1 to {MAX_STREAM_MESSAGES} matching items"
+        )
+    for secure, message_id in zip(secure_envelopes, expected_message_ids, strict=True):
+        header = secure.get("header", {}) if isinstance(secure, dict) else {}
+        if (
+            not isinstance(header, dict)
+            or header.get("sender") != local_agent_id
+            or header.get("recipient") != expected_peer_agent_id
+            or not isinstance(message_id, str)
+            or not message_id
+        ):
+            raise TransportError("encrypted envelope route or expected message ID is invalid")
     writer: asyncio.StreamWriter | None = None
     try:
         reader, writer = await asyncio.wait_for(
@@ -344,19 +376,26 @@ async def send_encrypted_envelope(
         )
         tls_peer = writer.get_extra_info("ssl_object")
         if _certificate_agent_id(tls_peer) != expected_peer_agent_id:
-            raise TransportError("TLS server certificate identity does not match expected OIX peer")
-        await write_frame(writer, secure_envelope, timeout_seconds=timeout_seconds)
-        receipt = await read_frame(reader, timeout_seconds=timeout_seconds)
-        if not verify_delivery_receipt(
-            receipt,
-            expected_peer_signing_public_key,
-            expected_recipient_agent_id=expected_peer_agent_id,
-            expected_sender_agent_id=local_agent_id,
-            expected_message_id=expected_message_id,
-            expected_content_digest=message_digest(secure_envelope),
-        ):
-            raise TransportError("peer receipt signature or encrypted-message binding is invalid")
-        return receipt
+            raise TransportError(
+                "TLS server certificate identity does not match expected OIX peer"
+            )
+        receipts: list[dict[str, Any]] = []
+        for secure, message_id in zip(secure_envelopes, expected_message_ids, strict=True):
+            await write_frame(writer, secure, timeout_seconds=timeout_seconds)
+            receipt = await read_frame(reader, timeout_seconds=timeout_seconds)
+            if not verify_delivery_receipt(
+                receipt,
+                expected_peer_signing_public_key,
+                expected_recipient_agent_id=expected_peer_agent_id,
+                expected_sender_agent_id=local_agent_id,
+                expected_message_id=message_id,
+                expected_content_digest=message_digest(secure),
+            ):
+                raise TransportError(
+                    "peer receipt signature or encrypted-message binding is invalid"
+                )
+            receipts.append(receipt)
+        return receipts
     except TimeoutError as exc:
         raise TransportError("mutual-TLS exchange timed out") from exc
     finally:
@@ -364,3 +403,32 @@ async def send_encrypted_envelope(
             writer.close()
             with suppress(Exception):
                 await asyncio.wait_for(writer.wait_closed(), timeout_seconds)
+
+
+async def send_encrypted_envelope(
+    secure_envelope: dict[str, Any],
+    *,
+    host: str,
+    port: int,
+    server_hostname: str,
+    ssl_context: ssl.SSLContext,
+    local_agent_id: str,
+    expected_peer_agent_id: str,
+    expected_message_id: str,
+    expected_peer_signing_public_key: bytes,
+    timeout_seconds: float = 10.0,
+) -> dict[str, Any]:
+    """Send one persisted encrypted envelope and verify its signed durable receipt."""
+    receipts = await send_encrypted_stream(
+        [secure_envelope],
+        expected_message_ids=[expected_message_id],
+        host=host,
+        port=port,
+        server_hostname=server_hostname,
+        ssl_context=ssl_context,
+        local_agent_id=local_agent_id,
+        expected_peer_agent_id=expected_peer_agent_id,
+        expected_peer_signing_public_key=expected_peer_signing_public_key,
+        timeout_seconds=timeout_seconds,
+    )
+    return receipts[0]
