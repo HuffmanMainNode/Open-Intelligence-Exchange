@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import pytest
 
+from oix.envelope import create_message
 from oix.identity import generate_identity, load_private_key
 from oix.peer_keys import PeerKeyError, SQLitePeerKeyStore
-from oix.secure_transport import generate_encryption_key
+from oix.secure_transport import encryption_key_fingerprint, generate_encryption_key
 
 
 def _peer(tmp_path):
@@ -60,3 +61,23 @@ def test_invalid_or_expired_certificate_is_rejected(tmp_path):
     store = SQLitePeerKeyStore(tmp_path / "peers.sqlite3")
     with pytest.raises(PeerKeyError, match="invalid or expired"):
         store.install(cert, signing_key.public_key().public_bytes_raw(), now=1061)
+
+def test_encrypt_for_peer_uses_only_active_registered_key(tmp_path):
+    signing_key, card = _peer(tmp_path)
+    peer_id = card["card"]["agent_id"]
+    local_key, local_card = _peer(tmp_path / "local")
+    cert = generate_encryption_key(tmp_path / "enc-a", signing_key, now=1000)
+    store = SQLitePeerKeyStore(tmp_path / "peers.sqlite3")
+    store.install(cert, signing_key.public_key().public_bytes_raw(), now=1100)
+    message = create_message(local_key, peer_id, "agent.hello", {})
+    secure = store.encrypt_for_peer(
+        message, signing_key.public_key().public_bytes_raw(), now=1100
+    )
+    assert secure["header"]["recipient_key_fingerprint"] == encryption_key_fingerprint(cert)
+    assert secure["header"]["recipient"] == peer_id
+    assert local_card["card"]["agent_id"] == message["body"]["sender"]
+    assert store.revoke(peer_id, now=1200, reason="test revocation")
+    with pytest.raises(PeerKeyError, match="no active"):
+        store.encrypt_for_peer(
+            message, signing_key.public_key().public_bytes_raw(), now=1200
+        )
