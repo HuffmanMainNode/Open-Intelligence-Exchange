@@ -109,3 +109,17 @@ def write_message(envelope: dict[str, Any], path: str) -> None:
     with open(path, "w", encoding="utf-8") as stream:
         json.dump(envelope, stream, indent=2, ensure_ascii=False)
         stream.write("\n")
+
+
+
+def verify_for_recipient(
+    envelope: dict[str, Any],
+    public_key: bytes,
+    local_id: str,
+    *,
+    now: int | None = None,
+) -> bool:
+    """Verify signature, validity window, sender key, and exact local recipient."""
+    if not verify_message(envelope, public_key, now=now):
+        return False
+    return envelope["body"].get("recipient") == local_id
