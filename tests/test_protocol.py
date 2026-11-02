@@ -4,7 +4,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from oix.canonical import canonical_json
-from oix.envelope import _b64, create_message, verify_message
+from oix.envelope import _b64, create_message, verify_for_recipient, verify_message
 from oix.evidence import make_evidence
 from oix.handshake import negotiate
 from oix.identity import generate_identity, load_card, verify_card
@@ -51,7 +51,9 @@ def test_capability_policy_is_explicit():
     policy = CapabilityPolicy({"public.research"})
     assert policy.permits("public.research")
     assert not policy.permits("filesystem.write")
-    assert policy.permits(None)
+    assert not policy.permits(None, message_type="task.request")
+    assert not policy.permits(None, message_type="evidence.submit")
+    assert policy.permits(None, message_type="agent.hello")
 
 
 def test_evidence_hash_and_status():
@@ -106,3 +108,19 @@ def test_in_memory_replay_cache_fails_closed_when_full():
     assert cache.accept({"sender": "a", "nonce": "a" * 24, "expires_at": 200}, now=100)
     assert not cache.accept({"sender": "b", "nonce": "b" * 24, "expires_at": 200}, now=100)
     assert not cache.accept({"sender": "a", "nonce": "a" * 24, "expires_at": 200}, now=100)
+
+
+
+def test_verify_for_recipient_binds_message_to_local_agent():
+    key = Ed25519PrivateKey.generate()
+    public = key.public_key().public_bytes_raw()
+    message = create_message(key, "agent:local", "task.request", {})
+    assert verify_for_recipient(message, public, "agent:local")
+    assert not verify_for_recipient(message, public, "agent:other")
+
+
+def test_task_request_requires_explicit_capability():
+    policy = CapabilityPolicy({"public.research"})
+    assert not policy.permits(None, message_type="task.request")
+    assert policy.permits("public.research", message_type="task.request")
+    assert not policy.permits("filesystem.write", message_type="task.request")
