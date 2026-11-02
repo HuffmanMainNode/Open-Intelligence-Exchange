@@ -27,6 +27,8 @@ jobs:
         run: pytest
       - name: Independent-process demo
         run: python examples/agent_a.py
+      - name: Independent multi-node discovery demo
+        run: python examples/multi_node_discovery_demo.py
       - name: Lint
         run: ruff check .
       - name: Security lint
