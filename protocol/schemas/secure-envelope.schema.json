@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://huffmanmainnode.github.io/Open-Intelligence-Exchange/protocol/schemas/secure-envelope.schema.json",
+  "title": "OIX Authenticated Encrypted Envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["header", "ciphertext"],
+  "properties": {
+    "header": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol", "version", "sender", "recipient", "recipient_key_fingerprint", "ephemeral_public_key", "nonce", "issued_at"],
+      "properties": {
+        "protocol": {"const": "OIX"},
+        "version": {"const": "1.0"},
+        "sender": {"type": "string", "minLength": 1, "maxLength": 128},
+        "recipient": {"type": "string", "minLength": 1, "maxLength": 128},
+        "recipient_key_fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "ephemeral_public_key": {"type": "string", "minLength": 43, "maxLength": 44},
+        "nonce": {"type": "string", "minLength": 16, "maxLength": 16},
+        "issued_at": {"type": "integer", "minimum": 0}
+      }
+    },
+    "ciphertext": {"type": "string", "minLength": 1, "maxLength": 1500000}
+  }
+}
