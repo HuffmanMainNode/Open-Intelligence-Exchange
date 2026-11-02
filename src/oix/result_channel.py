@@ -15,6 +15,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from .envelope import create_message, verify_message
 from .identity import fingerprint
+from .prekeys import encrypt_prekey_envelope, verify_prekey_bundle
 from .receipts import message_digest, verify_delivery_receipt
 from .secure_transport import (
     MAX_SECURE_ENVELOPE_BYTES,
@@ -69,6 +70,7 @@ class SQLiteResultPublisher:
                 "receipt_envelope_json": "TEXT",
                 "receipt_message_id": "TEXT",
                 "receipt_content_digest": "TEXT",
+                "secure_mode": "TEXT",
             }
             for column, declaration in migrations.items():
                 if column not in columns:
@@ -243,7 +245,7 @@ class SQLiteResultPublisher:
             row = db.execute(
                 """
                 SELECT sender,status,signed_envelope_json,signed_message_id,
-                       secure_envelope_json,secure_key_fingerprint
+                       secure_envelope_json,secure_key_fingerprint,secure_mode
                 FROM oix_result_outbox WHERE task_id=?
                 """,
                 (task_id,),
