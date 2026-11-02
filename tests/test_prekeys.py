@@ -181,7 +181,7 @@ def test_prekey_database_is_owner_only_on_posix(tmp_path):
     assert store.available_count(now=int(time.time())) == 0
 
 def test_prekey_consumption_and_inbox_acceptance_commit_atomically(tmp_path):
-    sender_key, sender_id, sender_card = _agent(tmp_path, "sender")
+    sender_key, _sender_id, sender_card = _agent(tmp_path, "sender")
     recipient_key, recipient_id, _ = _agent(tmp_path, "recipient")
     database = tmp_path / "shared.sqlite3"
     inbox = SQLiteInbox(
