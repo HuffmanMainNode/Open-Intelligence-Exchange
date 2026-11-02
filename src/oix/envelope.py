@@ -94,7 +94,8 @@ def verify_message(envelope: dict[str, Any], public_key: bytes, *, now: int | No
             return False
         if body["issued_at"] > current + 60 or body["expires_at"] < current:
             return False
-        if body["expires_at"] <= body["issued_at"]:
+        ttl = body["expires_at"] - body["issued_at"]
+        if not 1 <= ttl <= 86_400:
             return False
         Ed25519PublicKey.from_public_bytes(public_key).verify(
             _unb64(envelope["signature"]), canonical_json(body)
