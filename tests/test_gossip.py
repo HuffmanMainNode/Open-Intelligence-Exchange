@@ -27,7 +27,7 @@ def peer_id(card):
 
 
 def make_batch(tmp_path, sequence=1):
-    key, card = make_peer(tmp_path, "Source")
+    key, card = make_peer(tmp_path, f"Source {sequence}")
     announcement = create_announcement(
         key, card, ["https://source.example.org/oix"], sequence=sequence, now=NOW
     )
