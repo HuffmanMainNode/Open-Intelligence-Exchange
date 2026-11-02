@@ -251,6 +251,12 @@ class SQLiteInbox:
             raise InboxError("requested capability is not allowed by local policy")
 
         owns_connection = connection is None
+        if connection is not None:
+            if not connection.in_transaction:
+                raise ValueError("caller-supplied inbox connection must have an active transaction")
+            database_path = connection.execute("PRAGMA database_list").fetchone()[2]
+            if Path(database_path).resolve() != Path(self.database).resolve():
+                raise ValueError("caller-supplied inbox connection must use the inbox database")
         if owns_connection:
             with closing(self._connect()) as db:
                 return self._receive_validated(
