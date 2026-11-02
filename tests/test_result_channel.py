@@ -6,15 +6,15 @@ import pytest
 from oix.envelope import verify_message
 from oix.identity import generate_identity, load_private_key
 from oix.inbox import SQLiteInbox
-from oix.secure_transport import (
-    decrypt_envelope,
-    generate_encryption_key,
-    load_encryption_private_key,
-)
 from oix.result_channel import (
     ResultChannelError,
     ResultSchemaError,
     SQLiteResultPublisher,
+)
+from oix.secure_transport import (
+    decrypt_envelope,
+    generate_encryption_key,
+    load_encryption_private_key,
 )
 
 
