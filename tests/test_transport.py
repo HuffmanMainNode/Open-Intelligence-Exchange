@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
-import json
 import ssl
 from datetime import datetime, timedelta, timezone
 
@@ -207,6 +206,8 @@ def test_server_requires_mutual_tls_and_loopback_default(tmp_path):
             _require_server_tls(no_client_auth)
         with pytest.raises(ValueError, match="hostname"):
             from oix.transport import _require_client_tls
-            _require_client_tls(ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT))
+            invalid_client = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            invalid_client.check_hostname = False
+            _require_client_tls(invalid_client)
 
     asyncio.run(run())
