@@ -73,7 +73,7 @@ class SQLitePeerKeyStore:
             db.execute("BEGIN IMMEDIATE")
             active = db.execute(
                 "SELECT key_fingerprint,issued_at FROM peer_encryption_keys "
-                "WHERE agent_id=? AND status='active'", (agent_id,)
+                "WHERE agent_id=? AND status IN ('active','superseded')", (agent_id,)
             ).fetchone()
             if active and active["key_fingerprint"] == key_fp:
                 db.commit()
@@ -85,14 +85,14 @@ class SQLitePeerKeyStore:
                     raise PeerKeyError("replacement key certificate must be newer than active key")
                 db.execute(
                     "UPDATE peer_encryption_keys SET status='superseded' "
-                    "WHERE agent_id=? AND status='active'", (agent_id,)
+                    "WHERE agent_id=? AND status IN ('active','superseded')", (agent_id,)
                 )
             existing = db.execute(
                 "SELECT status FROM peer_encryption_keys WHERE agent_id=? AND key_fingerprint=?",
                 (agent_id, key_fp),
             ).fetchone()
-            if existing and existing["status"] == "revoked":
-                raise PeerKeyError("revoked encryption key cannot be reactivated")
+            if existing and existing["status"] != "active":
+                raise PeerKeyError("superseded or revoked encryption key cannot be reactivated")
             db.execute(
                 """INSERT INTO peer_encryption_keys(
                     agent_id,key_fingerprint,certificate_json,issued_at,expires_at,status
@@ -112,6 +112,8 @@ class SQLitePeerKeyStore:
         return key_fp
 
     def revoke(self, agent_id: str, *, now: int, reason: str) -> bool:
+        if not isinstance(now, int) or isinstance(now, bool) or now < 0:
+            raise ValueError("now must be a non-negative integer timestamp")
         if not isinstance(reason, str) or not 1 <= len(reason.strip()) <= 256:
             raise ValueError("reason must contain 1 to 256 characters")
         with self._connect() as db:
