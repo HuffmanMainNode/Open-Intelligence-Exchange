@@ -99,3 +99,4 @@ OIX is designed to map to existing agent and tool ecosystems. MCP provides a too
 ## 11. Security considerations
 
 See [THREAT_MODEL.md](../docs/THREAT_MODEL.md) and [SECURITY.md](../SECURITY.md). v0.1 does not provide key revocation distribution, forward secrecy, encrypted payloads, persistent replay protection, or a production transport. Do not treat a signed message as confidential.
+\n\nThe Python library exposes `verify_for_recipient(...)` to combine signature/validity checks with an exact local-recipient check. Callers that use `verify_message(...)` directly must check the recipient themselves.
