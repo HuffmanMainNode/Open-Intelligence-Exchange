@@ -94,6 +94,12 @@ The envelope is transport-neutral. Local files, standard input/output, authentic
 
 No central registry is required. Discovery records are hints, not trust anchors. Implementations MUST verify keys and apply local trust policy regardless of discovery source.
 
+The experimental reference implementation defines a signed discovery announcement in [discovery-announcement.schema.json](schemas/discovery-announcement.schema.json). The Ed25519 signature covers the canonical announcement body and is bound to the exact signed agent card by its SHA-256 digest and agent fingerprint. Announcements contain a monotonically increasing per-agent sequence, random UUID, integer issue/expiry timestamps, one to eight HTTPS endpoint hints, and capability labels drawn from the signed card.
+
+The reference verifier accepts TTLs from 1 to 3,600 seconds and permits at most 60 seconds of future clock skew. Its SQLite store rejects repeated or lower sequence numbers within that local store. Stored peers retain the explicit state discovered_untrusted. Discovery MUST NOT enroll a peer, install encryption keys, authorize messages, or execute tasks.
+
+The reference implementation validates endpoint syntax only. It MUST NOT fetch or resolve endpoint hints during parsing. Any future connection adapter must separately implement DNS/IP restrictions, redirect policy, TLS identity binding, timeout and size limits, rate limits, and explicit local-network policy. SQLite sequence history is local and does not provide distributed rollback protection or a network revocation feed.
+
 ## 10. Interoperability
 
 OIX is designed to map to existing agent and tool ecosystems. MCP provides a tool/resource interface; A2A provides agent discovery and task collaboration constructs. OIX does not claim full compatibility with either. See [INTEROPERABILITY.md](../docs/INTEROPERABILITY.md).
