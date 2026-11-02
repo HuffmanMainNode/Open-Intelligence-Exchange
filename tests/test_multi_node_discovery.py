@@ -13,8 +13,9 @@ def test_independent_multi_node_discovery_exchange():
         capture_output=True,
         text=True,
         timeout=45,
-        check=True,
+        check=False,
     )
+    assert result.returncode == 0, f"stdout={result.stdout}\\nstderr={result.stderr}"
     assert "OIX Phase 16 independent multi-node exchange: PASS" in result.stdout
     assert "databases: 2 separate SQLite files" in result.stdout
     assert "discovery trust state: discovered_untrusted" in result.stdout
