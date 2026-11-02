@@ -26,10 +26,10 @@ def peer_id(card):
     return card["card"]["agent_id"]
 
 
-def make_batch(tmp_path):
+def make_batch(tmp_path, sequence=1):
     key, card = make_peer(tmp_path, "Source")
     announcement = create_announcement(
-        key, card, ["https://source.example.org/oix"], sequence=1, now=NOW
+        key, card, ["https://source.example.org/oix"], sequence=sequence, now=NOW
     )
     return create_exchange_batch([{"announcement": announcement, "card": card}], now=NOW)
 
@@ -65,7 +65,8 @@ def test_gossip_rejects_invalid_signature_before_reserving_any_forward(tmp_path)
             batch, ledger, inbound_peer_id=None,
             operator_approved_peer_ids=destinations, hop_count=0, now=NOW + 1,
         )
-    assert not list((tmp_path).glob("*.sqlite3-wal"))
+    with ledger._connect() as db:
+        assert db.execute("SELECT COUNT(*) FROM gossip_seen").fetchone()[0] == 0
 
 
 def test_gossip_deduplicates_same_signed_batch_across_calls(tmp_path):
@@ -104,13 +105,14 @@ def test_gossip_enforces_hop_fanout_and_candidate_limits(tmp_path):
 
 
 def test_gossip_enforces_per_peer_hourly_quota_and_cancellation(tmp_path):
-    batch = make_batch(tmp_path)
+    batch = make_batch(tmp_path, sequence=1)
     destinations = make_destinations(tmp_path, 2)
     ledger = GossipLedger(tmp_path / "gossip.sqlite3")
+    policy = GossipPolicy(max_fanout=2, per_peer_hourly_limit=1)
     result = plan_gossip_forwarding(
         batch, ledger, inbound_peer_id=None,
         operator_approved_peer_ids=destinations, hop_count=0, now=NOW + 1,
-        policy=GossipPolicy(max_fanout=2, per_peer_hourly_limit=1),
+        policy=policy,
     )
     assert len(result["destinations"]) == 2
     digest = result["batch_sha256"]
@@ -120,6 +122,13 @@ def test_gossip_enforces_per_peer_hourly_quota_and_cancellation(tmp_path):
     with pytest.raises(GossipError, match="no pending"):
         ledger.mark_sent(digest, result["destinations"][0])
     ledger.mark_sent(digest, result["destinations"][1])
+    second = plan_gossip_forwarding(
+        make_batch(tmp_path, sequence=2), ledger, inbound_peer_id=None,
+        operator_approved_peer_ids=destinations, hop_count=0, now=NOW + 2,
+        policy=policy,
+    )
+    assert second["destinations"] == [result["destinations"][0]]
+    assert second["blocked"][result["destinations"][1]] == "hourly_quota"
 
 
 def test_gossip_rejects_malformed_operator_peer_ids(tmp_path):
