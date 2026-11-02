@@ -32,7 +32,7 @@ def fingerprint(public_key: bytes) -> str:
 
 def generate_identity(directory: str | Path, display_name: str, capabilities: list[str]) -> dict[str, Any]:
     path = Path(directory)
-    path.mkdir(parents=True, exist_ok=True)
+    path.mkdir(parents=True, exist_ok=True, mode=0o700)
     private = Ed25519PrivateKey.generate()
     private_raw = private.private_bytes(
         serialization.Encoding.Raw, serialization.PrivateFormat.Raw, serialization.NoEncryption()
@@ -44,10 +44,11 @@ def generate_identity(directory: str | Path, display_name: str, capabilities: li
     card_path = path / "agent-card.json"
     if private_path.exists() or card_path.exists():
         raise FileExistsError("identity files already exist; refusing to overwrite keys")
-    with private_path.open("xb") as key_file:
+    descriptor = os.open(
+        private_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600
+    )
+    with os.fdopen(descriptor, "wb") as key_file:
         key_file.write(private_raw)
-    if os.name != "nt":
-        os.chmod(private_path, 0o600)
     card = {
         "protocol": "OIX",
         "protocol_version": "0.1",

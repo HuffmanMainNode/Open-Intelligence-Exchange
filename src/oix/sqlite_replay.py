@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import sqlite3
 import time
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +18,7 @@ class SQLiteReplayCache:
         self.busy_timeout_ms = busy_timeout_ms
         if busy_timeout_ms < 1 or busy_timeout_ms > 60_000:
             raise ValueError("busy_timeout_ms must be between 1 and 60000")
-        with self._connect() as connection:
+        with closing(self._connect()) as connection, connection:
             connection.execute("""
                 CREATE TABLE IF NOT EXISTS replay_entries (
                     sender TEXT NOT NULL,
@@ -49,7 +50,7 @@ class SQLiteReplayCache:
         if expires_at < current:
             return False
 
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             connection.execute("BEGIN IMMEDIATE")
             connection.execute("DELETE FROM replay_entries WHERE expires_at < ?", (current,))
             try:

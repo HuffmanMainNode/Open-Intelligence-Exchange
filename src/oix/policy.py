@@ -6,5 +6,7 @@ class CapabilityPolicy:
     def __init__(self, allowed: set[str] | None = None) -> None:
         self.allowed = set(allowed or ())
 
-    def permits(self, requested: str | None) -> bool:
-        return requested is None or requested in self.allowed
+    def permits(self, requested: str | None, *, message_type: str | None = None) -> bool:
+        if requested is None:
+            return message_type not in {"task.request", "evidence.submit"}
+        return requested in self.allowed

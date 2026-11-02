@@ -15,7 +15,7 @@ OIX is not a chatbot, hosted agent, model, or mandatory network. It is a small i
 | Deterministic message encoding | Restricted canonical JSON; rejects floats and non-JSON values |
 | Agent identity | Ed25519 keypair, public-key fingerprint, signed agent card |
 | Message integrity | Ed25519 signatures over canonical message-body bytes |
-| Replay defense | Bounded in-memory nonce cache with expiry |
+| Replay defense | Bounded in-memory nonce cache plus optional durable SQLite replay cache |
 | Authorization | Explicit capability allow-list |
 | Evidence records | Provenance fields, content hashes, evidence status |
 | CLI | Identity generation, card inspection, message signing and verification |
@@ -37,7 +37,7 @@ ruff check .
 bandit -q -r src
 ```
 
-Private-key note: private.key is stored unencrypted with owner-only permissions on POSIX systems. Protect the directory, do not sync it to public storage, and use encrypted disk or a secret manager for sensitive deployments. Key encryption and rotation workflows are not implemented yet.
+Private-key note: `private.key` is stored unencrypted and is created with owner-only POSIX mode `0600`; the containing directory is created with mode `0700` when newly created. Windows does not enforce POSIX mode bits. Protect the directory, do not sync it to public storage, and use encrypted disk or a secret manager for sensitive deployments. Key encryption and rotation workflows are not implemented yet.
 
 Create an identity:
 
@@ -66,7 +66,7 @@ python examples/agent_a.py
 3. The sender builds a bounded message envelope with a recipient, expiry, random nonce, payload, and requested capability.
 4. The sender signs the canonical message body.
 5. The receiver validates the sender card, message signature, timestamps, recipient, and replay state.
-6. The receiver applies its own local capability allow-list. A valid signature alone never authorizes an action.
+6. The receiver applies its own local capability allow-list. `task.request` and `evidence.submit` require an explicit requested capability. A valid signature alone never authorizes an action.
 7. The receiver returns a receipt. The example does not execute the received payload.
 
 The runnable demonstration launches the receiver as a separate Python process and passes the signed envelope over standard input. This proves a process boundary without requiring a hosted relay or opening a network port.
@@ -93,7 +93,7 @@ The runnable demonstration launches the receiver as a separate Python process an
 
 ## Maturity and limitations
 
-OIX v0.1 is experimental. It is not a security certification, production agent platform, or claim of full MCP/A2A conformance. The canonical JSON rules are a restricted deterministic subset, not a complete RFC 8785 implementation. The replay cache is in-memory; network transport, persistent replay storage, key rotation/revocation infrastructure, and production key custody are future work.
+OIX v0.1 is experimental. It is not a security certification, production agent platform, or claim of full MCP/A2A conformance. The canonical JSON rules are a restricted deterministic subset, not a complete RFC 8785 implementation. The CLI and two-process example use the in-memory cache for demonstration only. The library also provides `SQLiteReplayCache` for durable, atomic replay protection across restarts on a shared local database. See [DURABLE-REPLAY.md](docs/DURABLE-REPLAY.md). Network transport, key rotation/revocation infrastructure, and production key custody remain future work.
 
 Use the protocol specification as the contract. Report ambiguity, interoperability problems, and security issues through the repository. See [SECURITY.md](SECURITY.md).
 

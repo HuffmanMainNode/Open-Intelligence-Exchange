@@ -1,10 +1,12 @@
 import json
+import os
+import stat
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from oix.canonical import canonical_json
-from oix.envelope import create_message, verify_message
+from oix.envelope import _b64, create_message, verify_for_recipient, verify_message
 from oix.evidence import make_evidence
 from oix.handshake import negotiate
 from oix.identity import generate_identity, load_card, verify_card
@@ -51,7 +53,9 @@ def test_capability_policy_is_explicit():
     policy = CapabilityPolicy({"public.research"})
     assert policy.permits("public.research")
     assert not policy.permits("filesystem.write")
-    assert policy.permits(None)
+    assert not policy.permits(None, message_type="task.request")
+    assert not policy.permits(None, message_type="evidence.submit")
+    assert policy.permits(None, message_type="agent.hello")
 
 
 def test_evidence_hash_and_status():
@@ -86,3 +90,47 @@ def test_identity_generation_refuses_to_overwrite_private_key(tmp_path):
     with pytest.raises(FileExistsError):
         generate_identity(tmp_path, "Replacement Agent", [])
     assert (tmp_path / "private.key").read_bytes() == original
+
+
+
+@pytest.mark.parametrize("ttl,expected", [(86400, True), (86401, False), (0, False), (-1, False)])
+def test_verifier_enforces_ttl_bounds(ttl, expected):
+    key = Ed25519PrivateKey.generate()
+    public = key.public_key().public_bytes_raw()
+    envelope = create_message(key, "agent:receiver", "task.request", {})
+    body = dict(envelope["body"])
+    body["expires_at"] = body["issued_at"] + ttl
+    envelope["body"] = body
+    envelope["signature"] = _b64(key.sign(canonical_json(body)))
+    assert verify_message(envelope, public, now=body["issued_at"]) is expected
+
+
+def test_in_memory_replay_cache_fails_closed_when_full():
+    cache = ReplayCache(max_entries=1)
+    assert cache.accept({"sender": "a", "nonce": "a" * 24, "expires_at": 200}, now=100)
+    assert not cache.accept({"sender": "b", "nonce": "b" * 24, "expires_at": 200}, now=100)
+    assert not cache.accept({"sender": "a", "nonce": "a" * 24, "expires_at": 200}, now=100)
+
+
+
+def test_verify_for_recipient_binds_message_to_local_agent():
+    key = Ed25519PrivateKey.generate()
+    public = key.public_key().public_bytes_raw()
+    message = create_message(key, "agent:local", "task.request", {})
+    assert verify_for_recipient(message, public, "agent:local")
+    assert not verify_for_recipient(message, public, "agent:other")
+
+
+def test_task_request_requires_explicit_capability():
+    policy = CapabilityPolicy({"public.research"})
+    assert not policy.permits(None, message_type="task.request")
+    assert policy.permits("public.research", message_type="task.request")
+    assert not policy.permits("filesystem.write", message_type="task.request")
+
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX file modes are unavailable")
+def test_identity_private_key_is_created_owner_only(tmp_path):
+    generate_identity(tmp_path, "Permission Test Agent", [])
+    private_key = tmp_path / "private.key"
+    assert stat.S_IMODE(private_key.stat().st_mode) == 0o600
