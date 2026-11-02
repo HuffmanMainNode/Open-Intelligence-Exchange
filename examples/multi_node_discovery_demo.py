@@ -49,6 +49,7 @@ def _write_key(path: Path, key: Any) -> None:
 def _issue_certificate(
     ca_key: Any,
     ca_name: x509.Name,
+    ca_cert: x509.Certificate,
     *,
     common_name: str,
     agent_id: str,
@@ -72,6 +73,13 @@ def _issue_certificate(
         .not_valid_before(now - timedelta(minutes=1))
         .not_valid_after(now + timedelta(hours=2))
         .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+        .add_extension(
+            x509.AuthorityKeyIdentifier.from_issuer_subject_key_identifier(
+                ca_cert.extensions.get_extension_for_class(x509.SubjectKeyIdentifier).value
+            ),
+            critical=False,
+        )
+        .add_extension(x509.SubjectKeyIdentifier.from_public_key(key.public_key()), critical=False)
         .add_extension(x509.ExtendedKeyUsage([usage]), critical=False)
         .add_extension(x509.SubjectAlternativeName(names), critical=False)
         .sign(ca_key, hashes.SHA256())
@@ -96,6 +104,7 @@ def _create_test_pki(root: Path, node_a_id: str, node_b_id: str) -> dict[str, Pa
         .not_valid_before(now - timedelta(minutes=1))
         .not_valid_after(now + timedelta(hours=2))
         .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+        .add_extension(x509.SubjectKeyIdentifier.from_public_key(ca_key.public_key()), critical=False)
         .add_extension(x509.KeyUsage(
             digital_signature=False, content_commitment=False, key_encipherment=False,
             data_encipherment=False, key_agreement=False, key_cert_sign=True,
@@ -106,7 +115,7 @@ def _create_test_pki(root: Path, node_a_id: str, node_b_id: str) -> dict[str, Pa
     ca_path = root / "test-ca.pem"
     ca_path.write_bytes(ca_cert.public_bytes(serialization.Encoding.PEM))
     a_cert, a_key = _issue_certificate(
-        ca_key, ca_name, common_name="node-a-client", agent_id=node_a_id,
+        ca_key, ca_name, ca_cert, common_name="node-a-client", agent_id=node_a_id,
         usage=ExtendedKeyUsageOID.CLIENT_AUTH, server=False, directory=root,
     )
     b_cert, b_key = _issue_certificate(
