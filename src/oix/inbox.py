@@ -513,6 +513,35 @@ class SQLiteInbox:
             for row in rows
         ]
 
+    def get_work(self, work_id: str) -> dict[str, Any]:
+        """Return one durable inbound-work record, including its operator decision.
+
+        This is a read-only status lookup for downstream integrations. It does
+        not approve, reject, execute, or dispatch the work item.
+        """
+        if not isinstance(work_id, str) or not work_id:
+            raise ValueError("work_id must be a non-empty string")
+        with closing(self._connect()) as db:
+            row = db.execute(
+                """SELECT work_id,sender,message_id,work_type,capability,payload_json,
+                          status,created_at,decided_at
+                   FROM inbound_work WHERE work_id=?""",
+                (work_id,),
+            ).fetchone()
+        if row is None:
+            raise WorkStateError("inbound work item does not exist")
+        return {
+            "work_id": row["work_id"],
+            "sender": row["sender"],
+            "message_id": row["message_id"],
+            "work_type": row["work_type"],
+            "capability": row["capability"],
+            "payload": json.loads(row["payload_json"]),
+            "status": row["status"],
+            "created_at": row["created_at"],
+            "decided_at": row["decided_at"],
+        }
+
     def decide_work(self, work_id: str, *, approve: bool, decided_at: int | None = None) -> str:
         """Record an operator decision; approval does not itself execute or dispatch work."""
         if not isinstance(approve, bool):
