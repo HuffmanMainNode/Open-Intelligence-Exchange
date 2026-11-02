@@ -278,3 +278,40 @@ def test_evidence_payload_validator_rejects_floating_point_summary():
     payload["summary"]["unsafe_float"] = 1.25
     with pytest.raises(InboxError, match="deterministic JSON"):
         validate_evidence_submit_payload(payload)
+
+
+def test_get_work_exposes_durable_operator_decision_without_mutating_it(tmp_path):
+    sender_key, sender_card = make_agent(tmp_path, "sender", ["evidence.submit"])
+    inbox = SQLiteInbox(
+        tmp_path / "inbox.sqlite3",
+        "local-agent",
+        CapabilityPolicy({"evidence.submit"}),
+    )
+    inbox.trust_peer(sender_card)
+    message = create_message(
+        sender_key,
+        "local-agent",
+        "evidence.submit",
+        valid_evidence_payload(),
+        capability="evidence.submit",
+    )
+    receipt = inbox.receive(message)
+
+    pending = inbox.get_work(receipt.work_id)
+    assert pending["status"] == "pending_review"
+    assert pending["sender"] == receipt.sender
+    assert pending["message_id"] == receipt.message_id
+    assert pending["work_type"] == "evidence.submit"
+    assert pending["decided_at"] is None
+
+    assert inbox.decide_work(receipt.work_id, approve=True, decided_at=456) == "approved"
+    approved = inbox.get_work(receipt.work_id)
+    assert approved["status"] == "approved"
+    assert approved["decided_at"] == 456
+    assert inbox.get_work(receipt.work_id) == approved
+
+
+def test_get_work_rejects_unknown_work_id(tmp_path):
+    inbox = SQLiteInbox(tmp_path / "inbox.sqlite3", "local-agent")
+    with pytest.raises(WorkStateError, match="does not exist"):
+        inbox.get_work("missing-work")
