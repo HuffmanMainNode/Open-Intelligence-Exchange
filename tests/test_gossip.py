@@ -136,3 +136,36 @@ def test_gossip_policy_rejects_unsafe_limits():
         gossip.GossipPolicy(max_fanout=99)
     with pytest.raises(gossip.GossipError):
         gossip.GossipPolicy(per_peer_hourly_limit=1000)
+
+
+def test_no_approved_peers_does_not_consume_batch_deduplication(tmp_path):
+    batch = make_batch(tmp_path)
+    ledger = gossip.GossipLedger(tmp_path / "gossip.sqlite3")
+    empty = gossip.plan_gossip_forwarding(
+        batch, ledger, inbound_peer_id=None,
+        operator_approved_peer_ids=[], hop_count=0, now=NOW + 1,
+    )
+    assert empty["status"] == "no_eligible_peers"
+    peer = make_destinations(tmp_path, 1)
+    planned = gossip.plan_gossip_forwarding(
+        batch, ledger, inbound_peer_id=None,
+        operator_approved_peer_ids=peer, hop_count=0, now=NOW + 2,
+    )
+    assert planned["status"] == "planned"
+
+
+def test_gossip_ledger_prunes_expired_batch_and_old_quota_rows(tmp_path):
+    ledger = gossip.GossipLedger(tmp_path / "gossip.sqlite3")
+    peer = make_destinations(tmp_path, 1)[0]
+    ledger.reserve(
+        "a" * 64, [peer], now=NOW, ttl_seconds=60,
+        max_fanout=1, per_peer_hourly_limit=2,
+    )
+    ledger.reserve(
+        "b" * 64, [peer], now=NOW + 7200, ttl_seconds=60,
+        max_fanout=1, per_peer_hourly_limit=2,
+    )
+    with ledger._connect() as db:
+        assert db.execute("SELECT COUNT(*) FROM gossip_seen").fetchone()[0] == 1
+        assert db.execute("SELECT COUNT(*) FROM gossip_forward_plan").fetchone()[0] == 1
+        assert db.execute("SELECT COUNT(*) FROM gossip_peer_quota").fetchone()[0] == 1
