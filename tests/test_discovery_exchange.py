@@ -4,7 +4,6 @@ import pytest
 
 from oix import discovery, discovery_exchange, identity
 
-
 NOW = 1_700_000_000
 
 
