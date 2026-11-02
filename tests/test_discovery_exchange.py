@@ -7,8 +7,8 @@ from oix.discovery import (
     create_announcement,
 )
 from oix.discovery_exchange import (
-    ExchangeError,
     MAX_EXCHANGE_BYTES,
+    ExchangeError,
     create_exchange_batch,
     ingest_exchange_batch,
     inspect_exchange_batch,
