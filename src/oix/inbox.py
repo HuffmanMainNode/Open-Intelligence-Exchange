@@ -65,7 +65,7 @@ def _validate_rfc3339(value: Any, field: str, *, nullable: bool = False) -> None
     if not isinstance(value, str) or not value or len(value) > 64:
         raise InboxError(f"{field} must be an RFC 3339 timestamp")
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value)
         if parsed.tzinfo is None:
             raise ValueError("timezone required")
     except ValueError as exc:
@@ -101,7 +101,7 @@ def _validate_evidence_submit_payload(payload: dict[str, Any]) -> None:
         try:
             parsed = urlsplit(source_uri)
             hostname = parsed.hostname
-            parsed.port
+            _ = parsed.port
         except ValueError as exc:
             raise InboxError("source_uri is malformed") from exc
         if (
