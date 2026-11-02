@@ -56,6 +56,12 @@ def _certificates(tmp_path):
             .not_valid_before(now - timedelta(minutes=1))
             .not_valid_after(now + timedelta(days=1))
             .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+            .add_extension(
+                x509.AuthorityKeyIdentifier.from_issuer_subject_key_identifier(
+                    ca_cert.extensions.get_extension_for_class(x509.SubjectKeyIdentifier).value
+                ),
+                critical=False,
+            )
             .add_extension(x509.ExtendedKeyUsage([usage]), critical=False)
         )
         if server:
