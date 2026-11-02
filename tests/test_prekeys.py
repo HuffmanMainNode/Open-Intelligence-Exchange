@@ -86,7 +86,7 @@ def test_wrong_sender_or_recipient_cannot_consume_prekey(tmp_path):
     encrypted = encrypt_prekey_envelope(
         message, bundle, recipient_key.public_key().public_bytes_raw(), now=now
     )
-    with pytest.raises(PreKeyError, match="sender or timestamp"):
+    with pytest.raises(PreKeyError, match="route, sender"):
         store.consume_and_decrypt(
             encrypted,
             recipient_key.public_key().public_bytes_raw(),
@@ -94,7 +94,7 @@ def test_wrong_sender_or_recipient_cannot_consume_prekey(tmp_path):
             recipient_id,
             now=now,
         )
-    with pytest.raises(PreKeyError, match="sender or timestamp"):
+    with pytest.raises(PreKeyError, match="route, sender"):
         store.consume_and_decrypt(
             encrypted,
             recipient_key.public_key().public_bytes_raw(),
