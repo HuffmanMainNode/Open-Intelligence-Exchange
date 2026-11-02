@@ -38,13 +38,16 @@ def create_message(
     *,
     ttl_seconds: int = 300,
     capability: str | None = None,
+    now: int | None = None,
 ) -> dict[str, Any]:
     if message_type not in ALLOWED_TYPES:
         raise ValueError("unsupported message_type")
     if not 1 <= ttl_seconds <= 86_400:
         raise ValueError("ttl_seconds must be between 1 and 86400")
     public_raw = private_key.public_key().public_bytes_raw()
-    now = int(time.time())
+    issued_at = int(time.time()) if now is None else now
+    if not isinstance(issued_at, int) or isinstance(issued_at, bool) or issued_at < 0:
+        raise ValueError("now must be a non-negative integer Unix timestamp")
     body = {
         "protocol": "OIX",
         "version": "0.1",
@@ -52,8 +55,8 @@ def create_message(
         "sender": fingerprint(public_raw),
         "recipient": recipient,
         "type": message_type,
-        "issued_at": now,
-        "expires_at": now + ttl_seconds,
+        "issued_at": issued_at,
+        "expires_at": issued_at + ttl_seconds,
         "nonce": secrets.token_urlsafe(24),
         "requested_capability": capability,
         "payload": payload,

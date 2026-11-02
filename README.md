@@ -15,13 +15,19 @@ OIX is not a chatbot, hosted agent, model, or mandatory network. It is a small i
 | Deterministic message encoding | Restricted canonical JSON; rejects floats and non-JSON values |
 | Agent identity | Ed25519 keypair, public-key fingerprint, signed agent card |
 | Message integrity | Ed25519 signatures over canonical message-body bytes |
-| Confidentiality wrapper | Optional X25519 + HKDF-SHA256 + ChaCha20-Poly1305 secure envelope, bound to a trusted Ed25519 identity |\n| One-time prekeys | Signed X25519 prekey bundles, ephemeral sender keys, and atomic single-use decryption with local private-key consumption |\n| Peer key lifecycle | Local SQLite registry with explicit rotation approval, monotonic certificate timestamps, revocation, and audit history |\n| Delivery receipts | Signed `delivery.receipt` messages bound to the exact encrypted-envelope digest and logical message ID |
+| Confidentiality wrapper | Optional X25519 + HKDF-SHA256 + ChaCha20-Poly1305 secure envelope, bound to a trusted Ed25519 identity |
+| One-time prekeys | Signed X25519 prekey bundles, ephemeral sender keys, and atomic single-use decryption with local private-key consumption |
+| Peer key lifecycle | Local SQLite registry with explicit rotation approval, monotonic certificate timestamps, revocation, and audit history |
+| Delivery receipts | Signed delivery.receipt messages bound to the exact encrypted-envelope digest and logical message ID |
+| Experimental network transport | Bounded length-prefixed frames over mutual TLS, encrypted one-time-prekey envelopes, durable signed acknowledgements |
 | Replay defense | Bounded in-memory cache, durable SQLite replay cache, and trusted-peer inbox replay controls |
 | Authorization | Explicit capability allow-list and approval-gated durable inbound work queue |
 | Evidence records | Provenance fields, content hashes, evidence status |
 | CLI | Identity generation, card inspection, message signing and verification |
 | Demo | Two local independent agent processes exchange and verify a signed message |
 | Quality gates | pytest, Ruff, Bandit, GitHub Actions |
+
+See [Mutual-TLS Transport](docs/MUTUAL-TLS-TRANSPORT.md) for the experimental TCP adapter, setup requirements, and security boundaries. The core library remains usable without network transport.
 
 ## Quick start
 
@@ -60,7 +66,7 @@ Run the local two-agent demo:
 python examples/agent_a.py
 ```
 
-## How an exchange works
+See [Mutual-TLS Transport](docs/MUTUAL-TLS-TRANSPORT.md) for the experimental TCP adapter, setup requirements, and security boundaries. The core library remains usable without network transport.\n\n## How an exchange works
 
 1. Each agent creates its own Ed25519 identity and signs its public agent card.
 2. The initiating agent checks the peer's advertised protocol version and required capability labels.

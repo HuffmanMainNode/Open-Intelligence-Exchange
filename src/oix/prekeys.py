@@ -33,6 +33,7 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from .canonical import canonical_json
 from .envelope import MAX_MESSAGE_BYTES, verify_for_recipient
 from .identity import fingerprint
+from .receipts import create_delivery_receipt, message_digest, verify_delivery_receipt
 
 PREKEY_VERSION = "1.0"
 MAX_BUNDLE_TTL = 604800
@@ -281,6 +282,15 @@ class SQLitePreKeyStore:
                     status TEXT NOT NULL CHECK(status IN ('available','consumed'))
                 )
             """)
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS oix_transport_receipts (
+                    envelope_sha256 TEXT PRIMARY KEY,
+                    sender TEXT NOT NULL,
+                    message_id TEXT NOT NULL,
+                    receipt_json TEXT NOT NULL,
+                    accepted_at INTEGER NOT NULL
+                )
+            """)
 
     def _connect(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.database, timeout=5)
@@ -325,10 +335,85 @@ class SQLitePreKeyStore:
         now: int | None = None,
         inbox: Any | None = None,
     ) -> dict[str, Any]:
-        """Atomically decrypt, optionally accept into a shared-database inbox, and consume."""
+        """Decrypt and consume a prekey, optionally accepting into a shared inbox."""
+        inner, _ = self._consume(
+            secure_envelope,
+            recipient_signing_public_key,
+            sender_signing_public_key,
+            local_agent_id,
+            now=now,
+            inbox=inbox,
+        )
+        return inner
+
+    def consume_and_receive(
+        self,
+        secure_envelope: dict[str, Any],
+        inbox: Any,
+        recipient_signing_public_key: bytes,
+        sender_signing_public_key: bytes,
+        local_agent_id: str,
+        *,
+        now: int | None = None,
+    ) -> tuple[dict[str, Any], Any]:
+        """Atomically consume the prekey and accept the message into the same SQLite inbox."""
+        inner = self.consume_and_decrypt(
+            secure_envelope,
+            recipient_signing_public_key,
+            sender_signing_public_key,
+            local_agent_id,
+            now=now,
+            inbox=inbox,
+        )
+        receipt = inbox.receive(inner, now=now)
+        return inner, receipt
+
+    def consume_and_acknowledge(
+        self,
+        secure_envelope: dict[str, Any],
+        inbox: Any,
+        recipient_signing_public_key: bytes,
+        sender_signing_public_key: bytes,
+        local_agent_id: str,
+        receipt_signing_private_key: Ed25519PrivateKey,
+        *,
+        now: int | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Atomically accept, consume, and persist a signed receipt for retry-safe transport."""
+        inner, receipt = self._consume(
+            secure_envelope,
+            recipient_signing_public_key,
+            sender_signing_public_key,
+            local_agent_id,
+            now=now,
+            inbox=inbox,
+            receipt_signing_private_key=receipt_signing_private_key,
+        )
+        if receipt is None:
+            raise PreKeyError("durable transport receipt was not created")
+        return inner, receipt
+
+    def _consume(
+        self,
+        secure_envelope: dict[str, Any],
+        recipient_signing_public_key: bytes,
+        sender_signing_public_key: bytes,
+        local_agent_id: str,
+        *,
+        now: int | None = None,
+        inbox: Any | None = None,
+        receipt_signing_private_key: Ed25519PrivateKey | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any] | None]:
         current = int(time.time()) if now is None else now
         if inbox is not None and Path(inbox.database).resolve() != Path(self.database).resolve():
             raise PreKeyError("prekey store and inbox must share the same SQLite database")
+        if receipt_signing_private_key is not None:
+            if inbox is None:
+                raise PreKeyError("a durable receipt requires an inbox")
+            if not isinstance(receipt_signing_private_key, Ed25519PrivateKey):
+                raise TypeError("receipt_signing_private_key must be an Ed25519PrivateKey")
+            if fingerprint(receipt_signing_private_key.public_key().public_bytes_raw()) != local_agent_id:
+                raise PreKeyError("receipt signing key does not match local agent identity")
         if not isinstance(secure_envelope, dict) or set(secure_envelope) != {"header", "ciphertext"}:
             raise PreKeyError("encrypted envelope has an invalid shape")
         if len(canonical_json(secure_envelope)) > MAX_PREKEY_ENVELOPE_BYTES:
@@ -355,9 +440,64 @@ class SQLitePreKeyStore:
         ciphertext = _unb64(secure_envelope["ciphertext"])
         if len(ephemeral_raw) != 32 or len(nonce) != 12:
             raise PreKeyError("invalid ephemeral public key or nonce length")
+        envelope_digest = message_digest(secure_envelope)
 
         with closing(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
+            if receipt_signing_private_key is not None:
+                prior_receipt = db.execute(
+                    """SELECT sender,message_id,receipt_json,accepted_at
+                       FROM oix_transport_receipts WHERE envelope_sha256=?""",
+                    (envelope_digest,),
+                ).fetchone()
+                if prior_receipt is not None:
+                    if prior_receipt["sender"] != header["sender"]:
+                        raise PreKeyError("stored transport receipt sender mismatch")
+                    inbox_row = db.execute(
+                        """SELECT envelope_json FROM inbox_messages
+                           WHERE sender=? AND message_id=?""",
+                        (prior_receipt["sender"], prior_receipt["message_id"]),
+                    ).fetchone()
+                    if inbox_row is None:
+                        raise PreKeyError("receipt exists without its durable inbox message")
+                    inner = json.loads(inbox_row["envelope_json"])
+                    try:
+                        receipt = json.loads(prior_receipt["receipt_json"])
+                    except (TypeError, ValueError) as exc:
+                        raise PreKeyError("stored transport receipt is malformed") from exc
+                    receipt_body = receipt.get("body") if isinstance(receipt, dict) else None
+                    if not isinstance(receipt_body, dict) or not verify_delivery_receipt(
+                        receipt,
+                        receipt_signing_private_key.public_key().public_bytes_raw(),
+                        expected_recipient_agent_id=local_agent_id,
+                        expected_sender_agent_id=header["sender"],
+                        expected_message_id=prior_receipt["message_id"],
+                        expected_content_digest=envelope_digest,
+                        now=receipt_body.get("issued_at"),
+                    ):
+                        raise PreKeyError("stored transport receipt failed signature or binding checks")
+                    receipt_expiry = receipt_body.get("expires_at", 0)
+                    if receipt_expiry < current:
+                        receipt = create_delivery_receipt(
+                            receipt_signing_private_key,
+                            header["sender"],
+                            prior_receipt["message_id"],
+                            envelope_digest,
+                            accepted_at=current,
+                            now=current,
+                        )
+                        db.execute(
+                            """UPDATE oix_transport_receipts
+                               SET receipt_json=?,accepted_at=? WHERE envelope_sha256=?""",
+                            (
+                                json.dumps(receipt, sort_keys=True, separators=(",", ":")),
+                                current,
+                                envelope_digest,
+                            ),
+                        )
+                    db.commit()
+                    return inner, receipt
+
             row = db.execute(
                 "SELECT private_key,public_key,expires_at,status "
                 "FROM one_time_prekeys WHERE key_id=?",
@@ -402,32 +542,32 @@ class SQLitePreKeyStore:
                 raise PreKeyError("inner OIX signature, sender, or recipient validation failed")
             if inbox is not None:
                 inbox.receive(inner, now=current, connection=db)
+
+            receipt: dict[str, Any] | None = None
+            if receipt_signing_private_key is not None:
+                receipt = create_delivery_receipt(
+                    receipt_signing_private_key,
+                    header["sender"],
+                    inner["body"]["message_id"],
+                    envelope_digest,
+                    accepted_at=current,
+                    now=current,
+                )
+                db.execute(
+                    """INSERT INTO oix_transport_receipts(
+                        envelope_sha256,sender,message_id,receipt_json,accepted_at
+                    ) VALUES(?,?,?,?,?)""",
+                    (
+                        envelope_digest,
+                        header["sender"],
+                        inner["body"]["message_id"],
+                        json.dumps(receipt, sort_keys=True, separators=(",", ":")),
+                        current,
+                    ),
+                )
             db.execute(
                 "DELETE FROM one_time_prekeys WHERE key_id=? AND status='available'",
                 (header["prekey_id"],),
             )
             db.commit()
-            return inner
-
-    def consume_and_receive(
-        self,
-        secure_envelope: dict[str, Any],
-        inbox: Any,
-        recipient_signing_public_key: bytes,
-        sender_signing_public_key: bytes,
-        local_agent_id: str,
-        *,
-        now: int | None = None,
-    ) -> tuple[dict[str, Any], Any]:
-        """Atomically consume the prekey and accept the message into the same SQLite inbox."""
-        inner = self.consume_and_decrypt(
-            secure_envelope,
-            recipient_signing_public_key,
-            sender_signing_public_key,
-            local_agent_id,
-            now=now,
-            inbox=inbox,
-        )
-        # This second read returns the durable inbox receipt (normally duplicate=True).
-        receipt = inbox.receive(inner, now=now)
-        return inner, receipt
+            return inner, receipt
