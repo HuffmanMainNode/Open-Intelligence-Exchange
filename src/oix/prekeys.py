@@ -33,6 +33,7 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from .canonical import canonical_json
 from .envelope import MAX_MESSAGE_BYTES, verify_for_recipient
 from .identity import fingerprint
+from .receipts import create_delivery_receipt, message_digest, verify_delivery_receipt
 
 PREKEY_VERSION = "1.0"
 MAX_BUNDLE_TTL = 604800
@@ -279,6 +280,15 @@ class SQLitePreKeyStore:
                     expires_at INTEGER NOT NULL,
                     created_at INTEGER NOT NULL,
                     status TEXT NOT NULL CHECK(status IN ('available','consumed'))
+                )
+            """)
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS oix_transport_receipts (
+                    envelope_sha256 TEXT PRIMARY KEY,
+                    sender TEXT NOT NULL,
+                    message_id TEXT NOT NULL,
+                    receipt_json TEXT NOT NULL,
+                    accepted_at INTEGER NOT NULL
                 )
             """)
 
