@@ -547,3 +547,18 @@ def test_discovery_transport_rejects_invalid_relay_configuration(tmp_path):
         OIXDiscoveryExchangeServer(
             store, ["ed25519:" + "1" * 64, "ed25519:" + "1" * 64]
         )
+
+
+def test_discovery_frame_limit_is_enforced_before_body_read():
+    async def run():
+        from oix.transport import MAX_DISCOVERY_FRAME_BYTES
+
+        reader = asyncio.StreamReader()
+        reader.feed_data((MAX_DISCOVERY_FRAME_BYTES + 1).to_bytes(4, "big"))
+        with pytest.raises(TransportError, match="length"):
+            await read_frame(
+                reader,
+                max_frame_bytes=MAX_DISCOVERY_FRAME_BYTES,
+            )
+
+    asyncio.run(run())
