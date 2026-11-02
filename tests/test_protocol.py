@@ -4,7 +4,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from oix.canonical import canonical_json
-from oix.envelope import create_message, verify_message
+from oix.envelope import _b64, create_message, verify_message
 from oix.evidence import make_evidence
 from oix.handshake import negotiate
 from oix.identity import generate_identity, load_card, verify_card
@@ -86,3 +86,23 @@ def test_identity_generation_refuses_to_overwrite_private_key(tmp_path):
     with pytest.raises(FileExistsError):
         generate_identity(tmp_path, "Replacement Agent", [])
     assert (tmp_path / "private.key").read_bytes() == original
+
+
+
+@pytest.mark.parametrize("ttl,expected", [(86400, True), (86401, False), (0, False), (-1, False)])
+def test_verifier_enforces_ttl_bounds(ttl, expected):
+    key = Ed25519PrivateKey.generate()
+    public = key.public_key().public_bytes_raw()
+    envelope = create_message(key, "agent:receiver", "task.request", {})
+    body = dict(envelope["body"])
+    body["expires_at"] = body["issued_at"] + ttl
+    envelope["body"] = body
+    envelope["signature"] = _b64(key.sign(canonical_json(body)))
+    assert verify_message(envelope, public, now=body["issued_at"]) is expected
+
+
+def test_in_memory_replay_cache_fails_closed_when_full():
+    cache = ReplayCache(max_entries=1)
+    assert cache.accept({"sender": "a", "nonce": "a" * 24, "expires_at": 200}, now=100)
+    assert not cache.accept({"sender": "b", "nonce": "b" * 24, "expires_at": 200}, now=100)
+    assert not cache.accept({"sender": "a", "nonce": "a" * 24, "expires_at": 200}, now=100)
