@@ -10,6 +10,7 @@ import binascii
 import hashlib
 import json
 import os
+import secrets
 import sqlite3
 import time
 import uuid
@@ -208,7 +209,7 @@ def encrypt_prekey_envelope(
     selected = next(
         (item for item in keys if item["key_id"] == key_id),
         None,
-    ) if key_id is not None else keys[0]
+    ) if key_id is not None else secrets.choice(keys)
     if selected is None:
         raise PreKeyError("requested one-time prekey is not in the signed bundle")
     public_raw = _unb64(selected["public_key"])
