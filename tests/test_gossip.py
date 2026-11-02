@@ -40,8 +40,9 @@ def make_destinations(tmp_path, count):
 
 def test_gossip_plans_only_operator_approved_peers_and_excludes_sender(tmp_path):
     batch = make_batch(tmp_path)
-    inbound = make_destinations(tmp_path, 1)[0]
-    approved = make_destinations(tmp_path, 4)
+    peers = make_destinations(tmp_path, 5)
+    inbound = peers[0]
+    approved = peers[1:]
     ledger = GossipLedger(tmp_path / "gossip.sqlite3")
     result = plan_gossip_forwarding(
         batch, ledger, inbound_peer_id=inbound,
