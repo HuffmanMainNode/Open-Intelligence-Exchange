@@ -240,18 +240,18 @@ def plan_gossip_forwarding(
         raise GossipError(str(exc)) from exc
     if hop_count >= policy.max_hops:
         return {"status": "hop_limit", "forwarded_batch": None, "destinations": []}
+    if not isinstance(operator_approved_peer_ids, list):
+        raise GossipError("operator-approved peers must be supplied as a list")
     if len(operator_approved_peer_ids) > policy.max_candidates:
         raise GossipError("approved peer candidate list exceeds configured limit")
     if (inbound_peer_id is not None
             and (not isinstance(inbound_peer_id, str)
                  or not _AGENT_ID.fullmatch(inbound_peer_id))):
         raise GossipError("inbound peer identifier is malformed")
-    if not isinstance(operator_approved_peer_ids, list):
-        raise GossipError("operator-approved peers must be supplied as a list")
     for index, item in enumerate(records):
         if not verify_announcement(item["announcement"], item["card"], now=now):
             raise GossipError(f"discovery record {index} failed signature or expiry verification")
-    if not verified_records:
+    if not records:
         raise GossipError("no verified records available for forwarding")
     # Preserve the original batch identifier and digest across relay hops.
     # Repackaging would generate a fresh UUID and defeat duplicate suppression.
@@ -259,6 +259,16 @@ def plan_gossip_forwarding(
         peer for peer in operator_approved_peer_ids
         if peer != inbound_peer_id
     ]
+    if not candidates:
+        return {
+            "status": "no_eligible_peers",
+            "batch_sha256": digest,
+            "forwarded_batch": None,
+            "destinations": [],
+            "blocked": {},
+            "hop_count": hop_count,
+            "trust_state": "discovered_untrusted",
+        }
     is_new, destinations, blocked = ledger.reserve(
         digest,
         candidates,
