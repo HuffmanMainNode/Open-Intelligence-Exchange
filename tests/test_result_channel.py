@@ -161,7 +161,7 @@ def test_delivery_acknowledgement_is_bound_to_persisted_message_id(tmp_path):
 
 
 def test_publisher_rejects_private_key_for_different_local_identity(tmp_path):
-    first_key, first_card = _identity(tmp_path, "first")
+    first_key, _ = _identity(tmp_path, "first")
     _, second_card = _identity(tmp_path, "second")
     database = tmp_path / "shared.sqlite3"
     SQLiteInbox(database, second_card["card"]["agent_id"])
