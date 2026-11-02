@@ -335,8 +335,13 @@ class SQLiteResultPublisher:
                     "recipient prekey bundle does not match the original trusted peer"
                 )
             if row["secure_envelope_json"] and row["secure_mode"] == "one_time_prekey":
-                existing = json.loads(row["secure_envelope_json"])
-                existing_header = existing.get("header", {}) if isinstance(existing, dict) else {}
+                existing = self._decode_persisted_secure_envelope(
+                    row["secure_envelope_json"],
+                    row["sender"],
+                    row["secure_key_fingerprint"],
+                    mode="one_time_prekey",
+                )
+                existing_header = existing["header"]
                 available_ids = {
                     item["key_id"] for item in recipient_bundle["body"]["keys"]
                 }
