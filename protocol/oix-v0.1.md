@@ -139,3 +139,12 @@ The forward-secrecy benefit depends on secure deletion and absence of recoverabl
 A `delivery.receipt` is an Ed25519-signed OIX message. It binds the acknowledged logical message ID to the SHA-256 digest of the exact encrypted transport envelope. A sender MUST verify the trusted recipient signature, expected route, message ID, digest, and receipt validity before recording delivery. The receipt is an authenticated peer assertion of durable acceptance, not proof of continued availability or physical storage guarantees.
 
 The reference library provides these cryptographic and local persistence primitives only. It does not open sockets, discover peers, distribute bundles, or claim remote delivery.
+
+
+## 13. Experimental bounded gossip planning
+
+The reference implementation includes an experimental local gossip planner. It accepts a bounded peer-exchange batch, verifies every nested signed discovery announcement against its signed agent card, and computes forwarding reservations only for an operator-supplied approved-peer list. It excludes the inbound peer, applies a configurable fan-out and hop ceiling, suppresses duplicate canonical batch digests in a local SQLite ledger, and enforces local per-peer hourly quotas.
+
+A forwarding reservation is not a delivery receipt. A transport adapter MUST call the sent-state transition only after its own transport reports success; it may cancel a reservation only when no send occurred. The planner does not open sockets, resolve endpoint hints, discover peers, or enroll trust.
+
+Hop count is mutable metadata and MUST NOT be treated as cryptographic proof or a security boundary. The deduplication ledger and quotas are local to one database and do not coordinate across installations. Implementations MUST continue to treat all discovered peers as untrusted until a separate operator-controlled enrollment and authorization process succeeds. See [GOSSIP-PLANNER.md](../docs/GOSSIP-PLANNER.md).
