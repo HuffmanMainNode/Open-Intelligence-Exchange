@@ -128,3 +128,49 @@ No network transport is implemented in this phase.
 
 
 For callers that want the local key lifecycle policy enforced at encryption time, use `SQLitePeerKeyStore.encrypt_for_peer()` instead of passing a certificate directly to the low-level `encrypt_envelope()` primitive. The store selects only the currently active, non-expired certificate for the exact trusted recipient identity and refuses encryption after local revocation.
+
+
+## One-time prekeys
+
+Phase 6 adds an optional one-time-prekey exchange for callers that need stronger protection against later compromise of the recipient's long-term X25519 key.
+
+The receiver creates a signed bundle of one-time X25519 public keys. The corresponding private keys remain in its local owner-only SQLite store. A sender verifies the bundle against the recipient's trusted Ed25519 identity, chooses one unused prekey, and encrypts an already-signed OIX message using a fresh ephemeral X25519 key, HKDF-SHA256, and ChaCha20-Poly1305.
+
+On receipt, `SQLitePreKeyStore.consume_and_decrypt()` takes a SQLite write lock, loads the exact private prekey, authenticates and decrypts the wrapper, verifies the inner OIX signature and recipient, and deletes the private prekey before committing. Invalid ciphertext does not consume the key. Concurrent duplicate deliveries serialize; only one can successfully consume a given prekey.
+
+Example:
+
+```python
+from oix.prekeys import (
+    SQLitePreKeyStore,
+    create_prekey_bundle,
+    encrypt_prekey_envelope,
+)
+
+# Recipient side: keep this store private and local.
+prekeys = SQLitePreKeyStore("./agent/prekeys.sqlite3")
+public_bundle = create_prekey_bundle(prekeys, recipient_signing_private_key)
+
+# Sender side: verify the bundle against the trusted recipient signing key.
+encrypted = encrypt_prekey_envelope(
+    signed_message,
+    public_bundle,
+    recipient_trusted_ed25519_public_key,
+)
+
+# Recipient side: successful decryption consumes the one-time private key.
+opened = prekeys.consume_and_decrypt(
+    encrypted,
+    recipient_signing_public_key,
+    sender_trusted_ed25519_public_key,
+    local_agent_id,
+)
+```
+
+### Forward-secrecy boundaries
+
+The one-time-prekey path avoids reusing a static recipient X25519 private key for every message. Its forward-secrecy benefit depends on the recipient's one-time private key being securely erased after use and not recoverable from backups, filesystem snapshots, database copies, or storage-device remnants. SQLite secure-delete is enabled and the database uses rollback-journal mode, but software cannot guarantee physical erasure on all SSDs, filesystems, virtualized disks, or backup systems.
+
+Prekey bundles are signed and time-bounded, but this phase does not provide an online prekey directory, automatic replenishment, remote prekey reservation, or network transport. Bundle distribution must occur over an authenticated channel. A bundle may be replayed, but each corresponding private key can be consumed only once locally. Operators should publish replenishment bundles before the available pool runs low.
+
+The existing static-recipient secure-envelope API remains available for compatibility. Callers must explicitly choose the one-time-prekey API to obtain these properties.

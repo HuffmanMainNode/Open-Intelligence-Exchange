@@ -119,3 +119,18 @@ The cross-repository demonstration signs a real OIX `task.request`, receives it 
 The Phase 4 publisher can also encrypt an approved signed result for the original peer. `encrypt_approved()` verifies that the peer's X25519 certificate is signed by the Ed25519 identity associated with the original request, then persists the encrypted wrapper and key fingerprint. `pending_secure_delivery()` exposes only these persisted encrypted wrappers. Repeated calls with the same recipient key reuse the stored wrapper. If the peer rotates its encryption key, the same signed result can be re-encrypted without changing its inner message ID.
 
 `pending_delivery()` is plaintext local inspection only. Do not use it as a network transport source. A future transport must use `pending_secure_delivery()` and authenticate the recipient acknowledgement before calling `mark_delivered()`. The publisher adds nullable secure-envelope columns to existing Phase 3 result-outbox databases when initialized.
+
+
+## Result encryption with one-time prekeys
+
+When the original requesting peer has published a signed prekey bundle, the result publisher can persist the approved result using a one-time prekey rather than a static X25519 certificate:
+
+```python
+secure_result = publisher.encrypt_approved_with_prekey(
+    task_id,
+    recipient_prekey_bundle,
+    recipient_trusted_ed25519_public_key,
+)
+```
+
+The stored wrapper is exposed through `pending_secure_delivery()`. Retries reuse the same wrapper while its selected prekey remains present in the supplied signed bundle. The same digest-bound signed receipt flow finalizes delivery after the peer consumes the prekey, verifies the inner result, and durably accepts it in its inbox.

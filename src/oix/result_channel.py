@@ -15,6 +15,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from .envelope import create_message, verify_message
 from .identity import fingerprint
+from .prekeys import encrypt_prekey_envelope, verify_prekey_bundle
 from .receipts import message_digest, verify_delivery_receipt
 from .secure_transport import (
     MAX_SECURE_ENVELOPE_BYTES,
@@ -69,6 +70,7 @@ class SQLiteResultPublisher:
                 "receipt_envelope_json": "TEXT",
                 "receipt_message_id": "TEXT",
                 "receipt_content_digest": "TEXT",
+                "secure_mode": "TEXT",
             }
             for column, declaration in migrations.items():
                 if column not in columns:
@@ -243,7 +245,7 @@ class SQLiteResultPublisher:
             row = db.execute(
                 """
                 SELECT sender,status,signed_envelope_json,signed_message_id,
-                       secure_envelope_json,secure_key_fingerprint
+                       secure_envelope_json,secure_key_fingerprint,secure_mode
                 FROM oix_result_outbox WHERE task_id=?
                 """,
                 (task_id,),
@@ -266,9 +268,11 @@ class SQLiteResultPublisher:
             if (
                 row["secure_envelope_json"]
                 and row["secure_key_fingerprint"] == key_fingerprint
+                and row["secure_mode"] in {None, "static_x25519"}
             ):
                 return self._decode_persisted_secure_envelope(
-                    row["secure_envelope_json"], row["sender"], key_fingerprint
+                    row["secure_envelope_json"], row["sender"], key_fingerprint,
+                    mode="static_x25519",
                 )
             signed = self._decode_persisted_envelope(row)
             secure = encrypt_envelope(
@@ -282,7 +286,8 @@ class SQLiteResultPublisher:
             db.execute(
                 """
                 UPDATE oix_result_outbox
-                SET secure_envelope_json=?,secure_key_fingerprint=?,secure_created_at=?
+                SET secure_envelope_json=?,secure_key_fingerprint=?,secure_created_at=?,
+                    secure_mode='static_x25519'
                 WHERE task_id=? AND status='signed' AND signed_message_id=?
                 """,
                 (
@@ -295,14 +300,110 @@ class SQLiteResultPublisher:
             )
             return secure
 
+    def encrypt_approved_with_prekey(
+        self,
+        task_id: str,
+        recipient_bundle: dict[str, Any],
+        recipient_signing_public_key: bytes,
+        *,
+        key_id: str | None = None,
+        now: int | None = None,
+    ) -> dict[str, Any]:
+        """Persist a result encrypted to one certified, single-use peer prekey."""
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                """
+                SELECT sender,status,signed_envelope_json,signed_message_id,
+                       secure_envelope_json,secure_key_fingerprint,secure_mode
+                FROM oix_result_outbox WHERE task_id=?
+                """,
+                (task_id,),
+            ).fetchone()
+            if row is None:
+                raise ResultChannelError("result does not exist")
+            if row["status"] != "signed":
+                raise ResultChannelError("result must be signed before encryption")
+            if (
+                fingerprint(recipient_signing_public_key) != row["sender"]
+                or not verify_prekey_bundle(
+                    recipient_bundle, recipient_signing_public_key, now=now
+                )
+                or recipient_bundle["body"]["agent_id"] != row["sender"]
+            ):
+                raise ResultChannelError(
+                    "recipient prekey bundle does not match the original trusted peer"
+                )
+            if row["secure_envelope_json"] and row["secure_mode"] == "one_time_prekey":
+                existing = self._decode_persisted_secure_envelope(
+                    row["secure_envelope_json"],
+                    row["sender"],
+                    row["secure_key_fingerprint"],
+                    mode="one_time_prekey",
+                )
+                existing_header = existing["header"]
+                available_ids = {
+                    item["key_id"] for item in recipient_bundle["body"]["keys"]
+                }
+                existing_id = existing_header.get("prekey_id")
+                if (
+                    existing_id in available_ids
+                    and (key_id is None or key_id == existing_id)
+                ):
+                    return self._decode_persisted_secure_envelope(
+                        row["secure_envelope_json"],
+                        row["sender"],
+                        row["secure_key_fingerprint"],
+                        mode="one_time_prekey",
+                    )
+            signed = self._decode_persisted_envelope(row)
+            secure = encrypt_prekey_envelope(
+                signed, recipient_bundle, recipient_signing_public_key,
+                key_id=key_id, now=now,
+            )
+            prekey_fingerprint = secure["header"]["prekey_fingerprint"]
+            encoded = json.dumps(
+                secure, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            )
+            if len(encoded.encode("utf-8")) > MAX_SECURE_ENVELOPE_BYTES:
+                raise ResultChannelError("encrypted result exceeds the secure envelope limit")
+            db.execute(
+                """
+                UPDATE oix_result_outbox
+                SET secure_envelope_json=?,secure_key_fingerprint=?,secure_created_at=?,
+                    secure_mode='one_time_prekey'
+                WHERE task_id=? AND status='signed' AND signed_message_id=?
+                """,
+                (
+                    encoded, prekey_fingerprint, datetime.now(UTC).isoformat(),
+                    task_id, row["signed_message_id"],
+                ),
+            )
+            return secure
+
     def _decode_persisted_secure_envelope(
-        self, encoded: str, recipient: str, key_fingerprint: str
+        self,
+        encoded: str,
+        recipient: str,
+        key_fingerprint: str | None,
+        *,
+        mode: str | None = None,
     ) -> dict[str, Any]:
         try:
             secure = json.loads(encoded)
         except (TypeError, ValueError) as exc:
             raise ResultChannelError("persisted encrypted envelope is not valid JSON") from exc
         header = secure.get("header", {}) if isinstance(secure, dict) else {}
+        selected_mode = mode or (
+            "one_time_prekey"
+            if isinstance(header, dict) and header.get("mode") == "one_time_prekey"
+            else "static_x25519"
+        )
+        key_binding_valid = (
+            header.get("prekey_fingerprint") == key_fingerprint
+            if selected_mode == "one_time_prekey"
+            else header.get("recipient_key_fingerprint") == key_fingerprint
+        )
         if (
             not isinstance(secure, dict)
             or set(secure) != {"header", "ciphertext"}
@@ -311,7 +412,12 @@ class SQLiteResultPublisher:
             or header.get("version") != "1.0"
             or header.get("sender") != self.local_agent_id
             or header.get("recipient") != recipient
-            or header.get("recipient_key_fingerprint") != key_fingerprint
+            or selected_mode not in {"static_x25519", "one_time_prekey"}
+            or not key_binding_valid
+            or (
+                selected_mode == "one_time_prekey"
+                and header.get("mode") != "one_time_prekey"
+            )
             or not isinstance(secure.get("ciphertext"), str)
             or len(encoded.encode("utf-8")) > MAX_SECURE_ENVELOPE_BYTES
         ):
@@ -326,7 +432,7 @@ class SQLiteResultPublisher:
             rows = db.execute(
                 """
                 SELECT task_id,sender,request_message_id,signed_message_id,
-                       secure_envelope_json,secure_key_fingerprint,created_at
+                       secure_envelope_json,secure_key_fingerprint,secure_mode,created_at
                 FROM oix_result_outbox
                 WHERE status='signed' AND secure_envelope_json IS NOT NULL
                 ORDER BY created_at,task_id LIMIT ?
@@ -343,6 +449,7 @@ class SQLiteResultPublisher:
                     row["secure_envelope_json"],
                     row["sender"],
                     row["secure_key_fingerprint"],
+                    mode=row["secure_mode"],
                 ),
                 "created_at": row["created_at"],
             }
@@ -388,7 +495,7 @@ class SQLiteResultPublisher:
             row = db.execute(
                 """
                 SELECT sender,status,signed_message_id,secure_envelope_json,
-                       secure_key_fingerprint,receipt_message_id
+                       secure_key_fingerprint,secure_mode,receipt_message_id
                 FROM oix_result_outbox WHERE task_id=?
                 """,
                 (task_id,),
@@ -400,7 +507,8 @@ class SQLiteResultPublisher:
             if not row["secure_envelope_json"]:
                 raise ResultChannelError("result must be encrypted before delivery")
             secure = self._decode_persisted_secure_envelope(
-                row["secure_envelope_json"], row["sender"], row["secure_key_fingerprint"]
+                row["secure_envelope_json"], row["sender"], row["secure_key_fingerprint"],
+                mode=row["secure_mode"],
             )
             digest = message_digest(secure)
             if not verify_delivery_receipt(
