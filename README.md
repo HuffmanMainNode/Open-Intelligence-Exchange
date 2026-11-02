@@ -15,7 +15,7 @@ OIX is not a chatbot, hosted agent, model, or mandatory network. It is a small i
 | Deterministic message encoding | Restricted canonical JSON; rejects floats and non-JSON values |
 | Agent identity | Ed25519 keypair, public-key fingerprint, signed agent card |
 | Message integrity | Ed25519 signatures over canonical message-body bytes |
-| Replay defense | Bounded in-memory nonce cache with expiry |
+| Replay defense | Bounded in-memory nonce cache plus optional durable SQLite replay cache |
 | Authorization | Explicit capability allow-list |
 | Evidence records | Provenance fields, content hashes, evidence status |
 | CLI | Identity generation, card inspection, message signing and verification |
@@ -93,7 +93,7 @@ The runnable demonstration launches the receiver as a separate Python process an
 
 ## Maturity and limitations
 
-OIX v0.1 is experimental. It is not a security certification, production agent platform, or claim of full MCP/A2A conformance. The canonical JSON rules are a restricted deterministic subset, not a complete RFC 8785 implementation. The replay cache is in-memory; network transport, persistent replay storage, key rotation/revocation infrastructure, and production key custody are future work.
+OIX v0.1 is experimental. It is not a security certification, production agent platform, or claim of full MCP/A2A conformance. The canonical JSON rules are a restricted deterministic subset, not a complete RFC 8785 implementation. The CLI and two-process example use the in-memory cache for demonstration only. The library also provides `SQLiteReplayCache` for durable, atomic replay protection across restarts on a shared local database. See [DURABLE-REPLAY.md](docs/DURABLE-REPLAY.md). Network transport, key rotation/revocation infrastructure, and production key custody remain future work.
 
 Use the protocol specification as the contract. Report ambiguity, interoperability problems, and security issues through the repository. See [SECURITY.md](SECURITY.md).
 
