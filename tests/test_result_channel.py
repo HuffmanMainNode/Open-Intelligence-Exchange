@@ -177,3 +177,29 @@ def test_publisher_fails_closed_without_shared_result_schema(tmp_path):
         SQLiteResultPublisher(
             tmp_path / "missing.sqlite3", card["card"]["agent_id"], key
         )
+
+def test_persisted_envelope_tampering_is_detected_before_reuse_or_delivery(tmp_path):
+    local_key, local_card = _identity(tmp_path, "local")
+    _, peer_card = _identity(tmp_path, "peer")
+    database = tmp_path / "shared.sqlite3"
+    _result_database(
+        database,
+        sender=local_card["card"]["agent_id"],
+        peer=peer_card["card"]["agent_id"],
+    )
+    publisher = SQLiteResultPublisher(
+        database, local_card["card"]["agent_id"], local_key
+    )
+    publisher.decide("task-123", approve=True)
+    envelope = publisher.sign_approved("task-123")
+    changed = json.loads(json.dumps(envelope))
+    changed["body"]["payload"]["result"] = "tampered"
+    with sqlite3.connect(database) as db:
+        db.execute(
+            "UPDATE oix_result_outbox SET signed_envelope_json=? WHERE task_id=?",
+            (json.dumps(changed), "task-123"),
+        )
+    with pytest.raises(ResultChannelError, match="integrity checks"):
+        publisher.sign_approved("task-123")
+    with pytest.raises(ResultChannelError, match="integrity checks"):
+        publisher.pending_delivery()
