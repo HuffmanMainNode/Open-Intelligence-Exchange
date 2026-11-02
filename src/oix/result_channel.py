@@ -357,13 +357,28 @@ class SQLiteResultPublisher:
             return secure
 
     def _decode_persisted_secure_envelope(
-        self, encoded: str, recipient: str, key_fingerprint: str
+        self,
+        encoded: str,
+        recipient: str,
+        key_fingerprint: str | None,
+        *,
+        mode: str | None = None,
     ) -> dict[str, Any]:
         try:
             secure = json.loads(encoded)
         except (TypeError, ValueError) as exc:
             raise ResultChannelError("persisted encrypted envelope is not valid JSON") from exc
         header = secure.get("header", {}) if isinstance(secure, dict) else {}
+        selected_mode = mode or (
+            "one_time_prekey"
+            if isinstance(header, dict) and header.get("mode") == "one_time_prekey"
+            else "static_x25519"
+        )
+        key_binding_valid = (
+            header.get("prekey_fingerprint") == key_fingerprint
+            if selected_mode == "one_time_prekey"
+            else header.get("recipient_key_fingerprint") == key_fingerprint
+        )
         if (
             not isinstance(secure, dict)
             or set(secure) != {"header", "ciphertext"}
@@ -372,7 +387,12 @@ class SQLiteResultPublisher:
             or header.get("version") != "1.0"
             or header.get("sender") != self.local_agent_id
             or header.get("recipient") != recipient
-            or header.get("recipient_key_fingerprint") != key_fingerprint
+            or selected_mode not in {"static_x25519", "one_time_prekey"}
+            or not key_binding_valid
+            or (
+                selected_mode == "one_time_prekey"
+                and header.get("mode") != "one_time_prekey"
+            )
             or not isinstance(secure.get("ciphertext"), str)
             or len(encoded.encode("utf-8")) > MAX_SECURE_ENVELOPE_BYTES
         ):
