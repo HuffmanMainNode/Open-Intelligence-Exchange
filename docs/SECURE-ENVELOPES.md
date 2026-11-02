@@ -103,3 +103,25 @@ Do not expose a network listener until key custody, rotation/revocation, forward
 `SQLiteResultPublisher.encrypt_approved()` can wrap an already-signed, operator-approved `task.result` for the original requesting peer. It verifies that the recipient X25519 certificate is signed by the Ed25519 identity bound to the original request sender, then persists the encrypted wrapper and recipient key fingerprint. `pending_secure_delivery()` exposes only persisted encrypted wrappers. Repeated calls using the same recipient key reuse the exact stored wrapper. The original signed message ID remains unchanged if the same result is re-encrypted after a peer key rotation.
 
 Use `pending_delivery()` only for local plaintext inspection. Future network transports must consume `pending_secure_delivery()` and authenticate a recipient acknowledgement before recording delivery.
+
+
+## Peer encryption-key lifecycle
+
+`SQLitePeerKeyStore` stores peer X25519 certificates separately from the Ed25519 trust card. Initial installation requires a valid certificate signed by the already-trusted Ed25519 identity. Replacing an active encryption key requires an explicit local `approve_rotation=True` decision and a certificate with a strictly newer `issued_at` value. Superseded and revoked key generations cannot be reactivated. Revocation invalidates every stored generation for that peer and is retained in the local event history.
+
+This is an operator-controlled local registry, not an online key directory or automatic key-update protocol. It does not distribute certificates, prove that a peer still controls a key, or provide forward secrecy. The current encryption construction still uses a static recipient X25519 key.
+
+## Signed durable-delivery receipts
+
+A transport receiver should issue a receipt only after the exact encrypted wrapper has been durably accepted into its local inbox. The receipt is a normal Ed25519-signed OIX `delivery.receipt` message. Its payload binds the original logical message ID to the SHA-256 digest of the exact encrypted wrapper and states `durable=true`.
+
+The sender verifies:
+- the receipt signature against the original recipient's trusted Ed25519 key;
+- the expected recipient-to-sender route;
+- the exact signed result message ID;
+- the digest of the exact persisted encrypted wrapper;
+- the durable-acceptance status and receipt validity window.
+
+`SQLiteResultPublisher.mark_delivered()` now requires this verified receipt and persists the receipt alongside the delivery state. A bare transport callback, matching message ID, or unsigned acknowledgement cannot mark a result delivered. The receipt proves the peer identity signed an assertion of durable acceptance; it is not independent proof of storage hardware, continued availability, or human review.
+
+No network transport is implemented in this phase.
