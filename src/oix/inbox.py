@@ -168,7 +168,7 @@ class SQLiteInbox:
         agent_id = self._validate_card(signed_card)
         timestamp = int(time.time()) if trusted_at is None else trusted_at
         if not isinstance(timestamp, int) or isinstance(timestamp, bool):
-            raise ValueError("trusted_at must be an integer timestamp")
+            raise TypeError("trusted_at must be an integer timestamp")
         encoded = canonical_json(signed_card).decode("utf-8")
         with closing(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
@@ -218,7 +218,7 @@ class SQLiteInbox:
         if len(encoded_envelope) > MAX_MESSAGE_BYTES:
             raise InboxError("message exceeds the 1 MB limit")
         if not isinstance(current, int) or isinstance(current, bool):
-            raise ValueError("now must be an integer Unix timestamp")
+            raise TypeError("now must be an integer Unix timestamp")
         if (
             not isinstance(body.get("issued_at"), int)
             or isinstance(body["issued_at"], bool)
@@ -351,7 +351,7 @@ class SQLiteInbox:
             raise TypeError("approve must be a boolean")
         timestamp = int(time.time()) if decided_at is None else decided_at
         if not isinstance(timestamp, int) or isinstance(timestamp, bool):
-            raise ValueError("decided_at must be an integer timestamp")
+            raise TypeError("decided_at must be an integer timestamp")
         with closing(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute(
