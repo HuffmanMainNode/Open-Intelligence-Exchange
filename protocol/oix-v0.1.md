@@ -52,7 +52,7 @@ Required body fields:
 
 Defined message types: `agent.hello`, `agent.hello_ack`, `task.request`, `task.accepted`, `task.progress`, `task.result`, `evidence.submit`, `error`.
 
-Implementations MUST reject unknown protocol versions and message types, malformed signatures, expired messages, messages issued more than 60 seconds in the future, and envelopes larger than 1,000,000 canonical bytes. Senders MUST use TTLs from 1 to 86,400 seconds.
+Implementations MUST reject unknown protocol versions and message types, malformed signatures, expired messages, messages issued more than 60 seconds in the future, and envelopes larger than 1,000,000 canonical bytes. Senders MUST use TTLs from 1 to 86,400 seconds. Receivers MUST independently reject envelopes whose `expires_at - issued_at` is outside that same range.
 
 ## 6. Verification and replay protection
 
@@ -65,7 +65,7 @@ A receiver MUST:
 6. Apply authorization policy independently of signature verification.
 7. Treat payload strings and embedded instructions as untrusted data.
 
-The reference replay cache is bounded and in-memory. It is suitable for examples and tests only. A multi-process or production receiver needs durable, atomic replay storage shared by all receiving workers.
+The default `ReplayCache` is bounded and in-memory and is suitable for examples and single-process tests only. The reference library also provides `SQLiteReplayCache`, which stores sender/nonce pairs durably and uses a database uniqueness constraint and transaction for atomic duplicate rejection. The CLI and example receiver currently use the in-memory cache. Multi-host deployments need a transactional shared datastore.
 
 ## 7. Authorization
 
