@@ -13,17 +13,16 @@ import json
 import ssl
 import time
 from contextlib import suppress
+from pathlib import Path
 from typing import Any
+
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from .canonical import canonical_json
 from .identity import fingerprint
 from .inbox import SQLiteInbox
 from .prekeys import MAX_PREKEY_ENVELOPE_BYTES, SQLitePreKeyStore
-from .receipts import (
-    create_delivery_receipt,
-    message_digest,
-    verify_delivery_receipt,
-)
+from .receipts import verify_delivery_receipt
 
 MAX_FRAME_BYTES = MAX_PREKEY_ENVELOPE_BYTES
 FRAME_HEADER_BYTES = 4
@@ -123,20 +122,18 @@ class OIXMutualTLSServer:
         self,
         inbox: SQLiteInbox,
         prekey_store: SQLitePreKeyStore,
-        signing_private_key: Any,
+        signing_private_key: Ed25519PrivateKey,
         *,
         timeout_seconds: float = 10.0,
         max_concurrent: int = 32,
     ) -> None:
-        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-
         if not isinstance(signing_private_key, Ed25519PrivateKey):
             raise TypeError("signing_private_key must be an Ed25519PrivateKey")
         if fingerprint(signing_private_key.public_key().public_bytes_raw()) != inbox.local_agent_id:
             raise ValueError("signing key does not belong to the inbox identity")
         if (
-            __import__("pathlib").Path(inbox.database).resolve()
-            != __import__("pathlib").Path(prekey_store.database).resolve()
+            Path(inbox.database).resolve()
+            != Path(prekey_store.database).resolve()
         ):
             raise ValueError("inbox and prekey store must share one SQLite database")
         if not 0.1 <= timeout_seconds <= 120:
@@ -195,23 +192,14 @@ class OIXMutualTLSServer:
                 raise TransportError("encrypted envelope has no sender identity")
             sender_id = header["sender"]
             sender_public_key = self.inbox.trusted_peer_public_key(sender_id)
-            inner, _ = await asyncio.wait_for(
-                asyncio.to_thread(
-                    self.prekey_store.consume_and_receive,
-                    secure,
-                    self.inbox,
-                    self.signing_private_key.public_key().public_bytes_raw(),
-                    sender_public_key,
-                    self.inbox.local_agent_id,
-                ),
-                timeout=self.timeout_seconds,
-            )
-            receipt = create_delivery_receipt(
+            _, receipt = await asyncio.to_thread(
+                self.prekey_store.consume_and_acknowledge,
+                secure,
+                self.inbox,
+                self.signing_private_key.public_key().public_bytes_raw(),
+                sender_public_key,
+                self.inbox.local_agent_id,
                 self.signing_private_key,
-                sender_id,
-                inner["body"]["message_id"],
-                message_digest(secure),
-                accepted_at=int(time.time()),
             )
             await write_frame(writer, receipt, timeout_seconds=self.timeout_seconds)
         except Exception:
