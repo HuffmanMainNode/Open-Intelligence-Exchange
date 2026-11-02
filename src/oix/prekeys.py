@@ -461,15 +461,16 @@ class SQLitePreKeyStore:
                     if inbox_row is None:
                         raise PreKeyError("receipt exists without its durable inbox message")
                     inner = json.loads(inbox_row["envelope_json"])
-                    inbox.receive(inner, now=current, connection=db)
                     try:
                         receipt = json.loads(prior_receipt["receipt_json"])
                     except (TypeError, ValueError) as exc:
                         raise PreKeyError("stored transport receipt is malformed") from exc
-                    if (
-                        not isinstance(receipt, dict)
-                        or receipt.get("body", {}).get("expires_at", 0) < current
-                    ):
+                    receipt_body = receipt.get("body") if isinstance(receipt, dict) else None
+                    receipt_expiry = (
+                        receipt_body.get("expires_at", 0)
+                        if isinstance(receipt_body, dict) else 0
+                    )
+                    if receipt_expiry < current:
                         receipt = create_delivery_receipt(
                             receipt_signing_private_key,
                             header["sender"],
