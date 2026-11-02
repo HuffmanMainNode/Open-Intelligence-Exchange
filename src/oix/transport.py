@@ -94,7 +94,7 @@ async def write_frame(
     writer.write(frame)
     try:
         await asyncio.wait_for(writer.drain(), timeout_seconds)
-    except asyncio.TimeoutError as exc:
+    except TimeoutError as exc:
         raise TransportError("transport frame write timed out") from exc
 
 
@@ -278,7 +278,7 @@ async def send_encrypted_envelope(
         ):
             raise TransportError("peer receipt signature or encrypted-message binding is invalid")
         return receipt
-    except asyncio.TimeoutError as exc:
+    except TimeoutError as exc:
         raise TransportError("mutual-TLS exchange timed out") from exc
     finally:
         if writer is not None:
