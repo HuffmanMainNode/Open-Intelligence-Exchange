@@ -18,7 +18,6 @@ from .canonical import canonical_json
 from .discovery import verify_announcement
 from .discovery_exchange import (
     ExchangeError,
-    create_exchange_batch,
     inspect_exchange_batch,
 )
 
@@ -120,9 +119,21 @@ class GossipLedger:
             raise GossipError("batch digest must be a lowercase SHA-256 hex value")
         if not isinstance(now, int) or isinstance(now, bool) or now < 0:
             raise GossipError("now must be a non-negative integer timestamp")
-        unique = sorted(set(peer_ids))
-        if any(not isinstance(peer, str) or not _AGENT_ID.fullmatch(peer) for peer in unique):
+        if not isinstance(peer_ids, list):
+            raise GossipError("peer identifiers must be supplied as a list")
+        if any(not isinstance(peer, str) or not _AGENT_ID.fullmatch(peer) for peer in peer_ids):
             raise GossipError("peer identifiers must be Ed25519 fingerprints")
+        unique = sorted(set(peer_ids))
+        if (not isinstance(ttl_seconds, int) or isinstance(ttl_seconds, bool)
+                or not 1 <= ttl_seconds <= 86400):
+            raise GossipError("ttl_seconds must be between 1 and 86400")
+        if (not isinstance(max_fanout, int) or isinstance(max_fanout, bool)
+                or not 1 <= max_fanout <= MAX_GOSSIP_FANOUT):
+            raise GossipError("max_fanout is outside supported limits")
+        if (not isinstance(per_peer_hourly_limit, int)
+                or isinstance(per_peer_hourly_limit, bool)
+                or not 1 <= per_peer_hourly_limit <= MAX_PEER_FORWARDS_PER_HOUR):
+            raise GossipError("per_peer_hourly_limit is outside supported limits")
         window_start = now - (now % 3600)
         selected: list[str] = []
         blocked: dict[str, str] = {}
@@ -233,8 +244,12 @@ def plan_gossip_forwarding(
         return {"status": "hop_limit", "forwarded_batch": None, "destinations": []}
     if len(operator_approved_peer_ids) > policy.max_candidates:
         raise GossipError("approved peer candidate list exceeds configured limit")
-    if inbound_peer_id is not None and not _AGENT_ID.fullmatch(inbound_peer_id):
+    if (inbound_peer_id is not None
+            and (not isinstance(inbound_peer_id, str)
+                 or not _AGENT_ID.fullmatch(inbound_peer_id))):
         raise GossipError("inbound peer identifier is malformed")
+    if not isinstance(operator_approved_peer_ids, list):
+        raise GossipError("operator-approved peers must be supplied as a list")
     verified_records = []
     for index, item in enumerate(records):
         if not verify_announcement(item["announcement"], item["card"], now=now):
@@ -242,8 +257,9 @@ def plan_gossip_forwarding(
         verified_records.append(item)
     if not verified_records:
         raise GossipError("no verified records available for forwarding")
-    outbound = create_exchange_batch(verified_records, now=now)
-    _, digest = inspect_exchange_batch(outbound, now=now)
+    # Preserve the original batch identifier and digest across relay hops.
+    # Repackaging would generate a fresh UUID and defeat duplicate suppression.
+    digest = hashlib.sha256(canonical_json(batch["exchange"])).hexdigest()
     candidates = [
         peer for peer in operator_approved_peer_ids
         if peer != inbound_peer_id
@@ -268,7 +284,7 @@ def plan_gossip_forwarding(
     return {
         "status": "planned" if destinations else "no_eligible_peers",
         "batch_sha256": digest,
-        "forwarded_batch": outbound if destinations else None,
+        "forwarded_batch": batch if destinations else None,
         "destinations": destinations,
         "blocked": blocked,
         "hop_count": hop_count + 1,
