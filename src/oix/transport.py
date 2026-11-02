@@ -432,3 +432,215 @@ async def send_encrypted_envelope(
         timeout_seconds=timeout_seconds,
     )
     return receipts[0]
+
+
+# Discovery exchange transport is separate from the encrypted task-message inbox.
+# A relay may carry signed public discovery records without being trusted to execute work.
+from .discovery import SQLiteDiscoveryStore
+from .discovery_exchange import (
+    MAX_EXCHANGE_BYTES,
+    ExchangeError,
+    ingest_exchange_batch,
+    inspect_exchange_batch,
+)
+
+MAX_DISCOVERY_FRAME_BYTES = MAX_EXCHANGE_BYTES
+
+
+class OIXDiscoveryExchangeServer:
+    """Receive bounded signed-discovery batches from explicitly approved TLS relays.
+
+    The relay identity is authenticated by mutual TLS and an OIX URI SAN. The
+    relay must also appear in the local operator-approved relay list. Records
+    inside the batch are independently verified and remain discovered_untrusted.
+    """
+
+    def __init__(
+        self,
+        store: SQLiteDiscoveryStore,
+        approved_relay_agent_ids: set[str] | list[str] | tuple[str, ...],
+        *,
+        timeout_seconds: float = 10.0,
+        max_concurrent: int = 16,
+    ) -> None:
+        if not isinstance(store, SQLiteDiscoveryStore):
+            raise TypeError("store must be a SQLiteDiscoveryStore")
+        if not isinstance(approved_relay_agent_ids, (set, list, tuple)):
+            raise TypeError("approved_relay_agent_ids must be an explicit collection")
+        peers = list(approved_relay_agent_ids)
+        if not peers or any(
+            not isinstance(peer, str) or not _AGENT_ID_PATTERN.fullmatch(peer)
+            for peer in peers
+        ):
+            raise ValueError("at least one canonical approved relay agent ID is required")
+        if len(peers) != len(set(peers)) or len(peers) > 256:
+            raise ValueError("approved relay list must be unique and contain at most 256 peers")
+        if not 0.1 <= timeout_seconds <= 120:
+            raise ValueError("timeout_seconds must be between 0.1 and 120")
+        if not 1 <= max_concurrent <= 128:
+            raise ValueError("max_concurrent must be between 1 and 128")
+        self.store = store
+        self.approved_relay_agent_ids = frozenset(peers)
+        self.timeout_seconds = timeout_seconds
+        self._semaphore = asyncio.Semaphore(max_concurrent)
+        self._server: asyncio.AbstractServer | None = None
+
+    async def start(
+        self,
+        *,
+        host: str = "127.0.0.1",
+        port: int = 0,
+        ssl_context: ssl.SSLContext,
+        allow_public_bind: bool = False,
+    ) -> tuple[str, int]:
+        if self._server is not None:
+            raise TransportError("discovery exchange server is already running")
+        _require_server_tls(ssl_context)
+        try:
+            address = ipaddress.ip_address(host)
+        except ValueError as exc:
+            raise ValueError("host must be an explicit IP address") from exc
+        if not address.is_loopback and not allow_public_bind:
+            raise ValueError("non-loopback binding requires allow_public_bind=True")
+        if not 0 <= port <= 65535:
+            raise ValueError("port must be between 0 and 65535")
+        self._server = await asyncio.start_server(
+            self._handle,
+            host,
+            port,
+            ssl=ssl_context,
+            limit=MAX_DISCOVERY_FRAME_BYTES + FRAME_HEADER_BYTES,
+        )
+        bound = self._server.sockets[0].getsockname()
+        return str(bound[0]), int(bound[1])
+
+    async def _handle(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        acquired = False
+        try:
+            await asyncio.wait_for(
+                self._semaphore.acquire(), timeout=self.timeout_seconds
+            )
+            acquired = True
+            peer = _certificate_agent_id(writer.get_extra_info("ssl_object"))
+            if peer not in self.approved_relay_agent_ids:
+                raise TransportError("TLS relay is not in the operator-approved relay list")
+            batch = await read_frame(reader, timeout_seconds=self.timeout_seconds)
+            result = await asyncio.to_thread(
+                ingest_exchange_batch,
+                batch,
+                self.store,
+                now=__import__("time").time_ns() // 1_000_000_000,
+            )
+            acknowledgement = {
+                "protocol": "OIX-DISCOVERY-ACK",
+                "protocol_version": "0.1",
+                "batch_id": result["batch_id"],
+                "batch_sha256": result["batch_sha256"],
+                "received": result["received"],
+                "accepted_count": result["accepted_count"],
+                "rejected_count": result["rejected_count"],
+                "trust_state": "discovered_untrusted",
+            }
+            await write_frame(
+                writer, acknowledgement, timeout_seconds=self.timeout_seconds
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "OIX discovery transport session rejected (%s)", type(exc).__name__
+            )
+        finally:
+            if acquired:
+                self._semaphore.release()
+            writer.close()
+            with suppress(Exception):
+                await asyncio.wait_for(writer.wait_closed(), self.timeout_seconds)
+
+    async def serve_forever(self) -> None:
+        if self._server is None:
+            raise TransportError("discovery exchange server has not been started")
+        async with self._server:
+            await self._server.serve_forever()
+
+    async def close(self) -> None:
+        if self._server is not None:
+            self._server.close()
+            await self._server.wait_closed()
+            self._server = None
+
+
+async def send_discovery_exchange(
+    batch: dict[str, Any],
+    *,
+    host: str,
+    port: int,
+    server_hostname: str,
+    ssl_context: ssl.SSLContext,
+    expected_peer_agent_id: str,
+    timeout_seconds: float = 10.0,
+) -> dict[str, Any]:
+    """Send one bounded discovery batch to an explicitly selected, TLS-pinned OIX peer."""
+    _require_client_tls(ssl_context)
+    if not isinstance(expected_peer_agent_id, str) or not _AGENT_ID_PATTERN.fullmatch(
+        expected_peer_agent_id
+    ):
+        raise ValueError("expected_peer_agent_id must be a canonical OIX agent ID")
+    if not 0.1 <= timeout_seconds <= 120:
+        raise ValueError("timeout_seconds must be between 0.1 and 120")
+    try:
+        records, digest = inspect_exchange_batch(
+            batch, now=__import__("time").time_ns() // 1_000_000_000
+        )
+    except (ExchangeError, TypeError, ValueError) as exc:
+        raise TransportError("outbound discovery batch failed validation") from exc
+    payload_size = len(canonical_json(batch))
+    if not 1 <= payload_size <= MAX_DISCOVERY_FRAME_BYTES:
+        raise TransportError("discovery frame exceeds the permitted byte limit")
+
+    writer: asyncio.StreamWriter | None = None
+    try:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(
+                host,
+                port,
+                ssl=ssl_context,
+                server_hostname=server_hostname,
+                limit=MAX_DISCOVERY_FRAME_BYTES + FRAME_HEADER_BYTES,
+            ),
+            timeout_seconds,
+        )
+        peer = _certificate_agent_id(writer.get_extra_info("ssl_object"))
+        if peer != expected_peer_agent_id:
+            raise TransportError("TLS server certificate identity does not match expected OIX peer")
+        await write_frame(writer, batch, timeout_seconds=timeout_seconds)
+        acknowledgement = await read_frame(reader, timeout_seconds=timeout_seconds)
+        required = {
+            "protocol", "protocol_version", "batch_id", "batch_sha256",
+            "received", "accepted_count", "rejected_count", "trust_state",
+        }
+        if (
+            not isinstance(acknowledgement, dict)
+            or set(acknowledgement) != required
+            or acknowledgement.get("protocol") != "OIX-DISCOVERY-ACK"
+            or acknowledgement.get("protocol_version") != "0.1"
+            or acknowledgement.get("batch_id") != batch["exchange"]["batch_id"]
+            or acknowledgement.get("batch_sha256") != digest
+            or acknowledgement.get("received") != len(records)
+            or acknowledgement.get("trust_state") != "discovered_untrusted"
+            or not isinstance(acknowledgement.get("accepted_count"), int)
+            or isinstance(acknowledgement.get("accepted_count"), bool)
+            or not isinstance(acknowledgement.get("rejected_count"), int)
+            or isinstance(acknowledgement.get("rejected_count"), bool)
+            or acknowledgement["accepted_count"] + acknowledgement["rejected_count"]
+            != len(records)
+        ):
+            raise TransportError("discovery acknowledgement does not match the sent batch")
+        return {"tls_peer_agent_id": peer, **acknowledgement}
+    except TimeoutError as exc:
+        raise TransportError("discovery exchange timed out") from exc
+    finally:
+        if writer is not None:
+            writer.close()
+            with suppress(Exception):
+                await asyncio.wait_for(writer.wait_closed(), timeout_seconds)
