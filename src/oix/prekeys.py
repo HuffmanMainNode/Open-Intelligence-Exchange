@@ -13,7 +13,6 @@ import os
 import secrets
 import sqlite3
 import time
-import uuid
 from contextlib import closing
 from pathlib import Path
 from typing import Any
@@ -86,7 +85,7 @@ def _derive_key(
 
 
 def create_prekey_bundle(
-    store: "SQLitePreKeyStore",
+    store: SQLitePreKeyStore,
     signing_private_key: Ed25519PrivateKey,
     *,
     count: int = 20,
