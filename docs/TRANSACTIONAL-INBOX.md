@@ -36,3 +36,8 @@ OIX v0.1 signs messages but does not encrypt them. This inbox is not an encrypti
 The database is local SQLite with WAL and a 5-second default busy timeout. POSIX database files are created/restricted to mode 0600; Windows requires host-level access controls. Back up the database securely. Do not place it in a public repository or shared untrusted directory.
 
 The inbox is a single-host persistence component, not a distributed broker. Multi-host replay and trust synchronization are not implemented.
+
+
+## Read-only decision lookup
+
+`SQLiteInbox.get_work(work_id)` returns the durable inbound work record, including sender, message ID, message type, payload, status, creation time and operator decision timestamp. It is a read-only lookup intended for downstream integrations that must verify that a particular message was explicitly approved. It does not change the decision, execute the payload, or dispatch work. Unknown work IDs raise `WorkStateError`.
