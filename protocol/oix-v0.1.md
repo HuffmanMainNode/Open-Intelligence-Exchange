@@ -100,6 +100,8 @@ The reference verifier accepts TTLs from 1 to 3,600 seconds and permits at most 
 
 The reference implementation validates endpoint syntax only. It MUST NOT fetch or resolve endpoint hints during parsing. Any future connection adapter must separately implement DNS/IP restrictions, redirect policy, TLS identity binding, timeout and size limits, rate limits, and explicit local-network policy. SQLite sequence history is local and does not provide distributed rollback protection or a network revocation feed.
 
+The experimental peer-exchange wrapper is defined by [discovery-exchange.schema.json](schemas/discovery-exchange.schema.json). It carries one to 64 announcement/card pairs in a canonical batch no larger than 512 KiB. The wrapper is transport-neutral and unauthenticated; each nested announcement and card MUST be verified independently. A batch digest is an integrity identifier for logs, not a signature or relay identity proof. Receivers may accept valid records and reject invalid or replayed entries independently. A batch wrapper MUST NOT grant trust, authorize capabilities, or trigger endpoint connections. Network transports MUST enforce their own frame-size, rate, timeout, and concurrency limits before parsing.
+
 ## 10. Interoperability
 
 OIX is designed to map to existing agent and tool ecosystems. MCP provides a tool/resource interface; A2A provides agent discovery and task collaboration constructs. OIX does not claim full compatibility with either. See [INTEROPERABILITY.md](../docs/INTEROPERABILITY.md).
