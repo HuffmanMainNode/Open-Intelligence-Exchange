@@ -27,7 +27,7 @@ Allow independently operated agents to exchange bounded, verifiable data while k
 |---|---|---|
 | Message tampering | Ed25519 signature over canonical body | No payload confidentiality |
 | Key substitution | Fingerprint derived from public key; signed card | No global revocation service |
-| Replay | Nonce cache and expiry | Cache is in-memory and process-local |
+| Replay | In-memory cache for demos; SQLiteReplayCache for durable local storage | CLI and demo use in-memory cache; SQLite does not solve multi-host coordination |
 | Expired/future messages | Timestamp checks and bounded TTL | Clock synchronization is an operator concern |
 | Capability escalation | Separate local allow-list policy | Policy engine is intentionally minimal |
 | Oversized payload | 1 MB envelope limit; canonical depth/member limits | Transport-level limits must also be configured |
