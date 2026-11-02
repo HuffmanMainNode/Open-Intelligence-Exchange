@@ -271,8 +271,7 @@ def test_result_is_encrypted_for_original_peer_and_persisted_before_delivery(tmp
 
 def test_result_cannot_be_encrypted_to_a_different_peer(tmp_path):
     local_key, local_card = _identity(tmp_path, "local")
-    peer_key, peer_card = _identity(tmp_path, "peer")
-    peer_dir = tmp_path / "peer"
+    _, peer_card = _identity(tmp_path, "peer")
     wrong_key, _ = _identity(tmp_path, "wrong-peer")
     database = tmp_path / "shared.sqlite3"
     _result_database(
