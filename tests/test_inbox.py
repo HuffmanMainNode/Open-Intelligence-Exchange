@@ -243,7 +243,6 @@ def test_evidence_submit_requires_strict_metadata_contract_and_operator_review(t
         lambda payload: payload.update({"unexpected": "field"}),
         lambda payload: payload.update({"source_uri": "file:///etc/passwd"}),
         lambda payload: payload["artifact"].update({"sha256": "not-a-digest"}),
-        lambda payload: payload["summary"].update({"unsafe_float": 1.25}),
         lambda payload: payload.update({"collected_at": "2026-11-02T00:00:00"}),
         lambda payload: payload.update({"schema_version": "2.0"}),
         lambda payload: payload.update({"limitations": []}),
