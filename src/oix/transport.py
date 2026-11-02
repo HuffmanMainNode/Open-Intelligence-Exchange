@@ -22,7 +22,6 @@ from cryptography import x509
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from .canonical import canonical_json
-from .identity import fingerprint
 from .discovery import SQLiteDiscoveryStore
 from .discovery_exchange import (
     MAX_EXCHANGE_BYTES,
@@ -30,6 +29,7 @@ from .discovery_exchange import (
     ingest_exchange_batch,
     inspect_exchange_batch,
 )
+from .identity import fingerprint
 from .inbox import SQLiteInbox
 from .prekeys import MAX_PREKEY_ENVELOPE_BYTES, SQLitePreKeyStore
 from .receipts import message_digest, verify_delivery_receipt
@@ -108,9 +108,12 @@ async def _decode_frame(
     prefix: bytes,
     *,
     timeout_seconds: float,
+    max_frame_bytes: int = MAX_FRAME_BYTES,
 ) -> dict[str, Any]:
     length = int.from_bytes(prefix, "big")
-    if not 1 <= length <= MAX_FRAME_BYTES:
+    if not 1 <= max_frame_bytes <= MAX_FRAME_BYTES:
+        raise ValueError("max_frame_bytes must be within the transport frame limit")
+    if not 1 <= length <= max_frame_bytes:
         raise TransportError("transport frame length is outside the permitted range")
     try:
         payload = await asyncio.wait_for(reader.readexactly(length), timeout_seconds)
@@ -132,6 +135,7 @@ async def read_frame(
     reader: asyncio.StreamReader,
     *,
     timeout_seconds: float = 10.0,
+    max_frame_bytes: int = MAX_FRAME_BYTES,
 ) -> dict[str, Any]:
     """Read exactly one bounded canonical JSON frame."""
     try:
@@ -142,7 +146,10 @@ async def read_frame(
         raise TransportError("transport frame read timed out") from exc
     except asyncio.IncompleteReadError as exc:
         raise TransportError("transport frame was truncated") from exc
-    return await _decode_frame(reader, prefix, timeout_seconds=timeout_seconds)
+    return await _decode_frame(
+        reader, prefix, timeout_seconds=timeout_seconds,
+        max_frame_bytes=max_frame_bytes,
+    )
 
 
 async def _read_stream_frame(
@@ -524,7 +531,11 @@ class OIXDiscoveryExchangeServer:
             peer = _certificate_agent_id(writer.get_extra_info("ssl_object"))
             if peer not in self.approved_relay_agent_ids:
                 raise TransportError("TLS relay is not in the operator-approved relay list")
-            batch = await read_frame(reader, timeout_seconds=self.timeout_seconds)
+            batch = await read_frame(
+                reader,
+                timeout_seconds=self.timeout_seconds,
+                max_frame_bytes=MAX_DISCOVERY_FRAME_BYTES,
+            )
             result = await asyncio.to_thread(
                 ingest_exchange_batch,
                 batch,
