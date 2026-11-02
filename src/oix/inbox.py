@@ -72,7 +72,7 @@ def _validate_rfc3339(value: Any, field: str, *, nullable: bool = False) -> None
         raise InboxError(f"{field} must be an RFC 3339 timestamp with timezone") from exc
 
 
-def _validate_evidence_submit_payload(payload: dict[str, Any]) -> None:
+def validate_evidence_submit_payload(payload: dict[str, Any]) -> None:
     """Validate the strict, metadata-only evidence.submit 1.0 payload contract."""
     fields = {
         "schema_version", "evidence_id", "evidence_type", "source_uri",
@@ -347,7 +347,7 @@ class SQLiteInbox:
         if not isinstance(message_type, str) or message_type not in ALLOWED_TYPES:
             raise InboxError("unsupported message type")
         if message_type == "evidence.submit":
-            _validate_evidence_submit_payload(body["payload"])
+            validate_evidence_submit_payload(body["payload"])
         message_id = body.get("message_id")
         try:
             if not isinstance(message_id, str) or str(uuid.UUID(message_id)) != message_id:
