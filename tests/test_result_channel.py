@@ -162,7 +162,7 @@ def test_delivery_acknowledgement_is_bound_to_persisted_message_id(tmp_path):
     envelope = publisher.sign_approved("task-123")
     message_id = envelope["body"]["message_id"]
     with pytest.raises(ResultChannelError, match="must be encrypted"):
-        publisher.mark_delivered("task-123", {})
+        publisher.mark_delivered("task-123", {}, b"")
     secure = publisher.encrypt_approved(
         "task-123", peer_certificate, peer_key.public_key().public_bytes_raw()
     )
