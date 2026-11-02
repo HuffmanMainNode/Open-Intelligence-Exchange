@@ -15,6 +15,12 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from .envelope import create_message, verify_message
 from .identity import fingerprint
+from .secure_transport import (
+    MAX_SECURE_ENVELOPE_BYTES,
+    encrypt_envelope,
+    encryption_key_fingerprint,
+    verify_encryption_certificate,
+)
 
 
 class ResultChannelError(RuntimeError):
@@ -52,6 +58,19 @@ class SQLiteResultPublisher:
         self.private_key = private_key
         with self._connect() as db:
             self._require_schema(db)
+            columns = {
+                row["name"] for row in db.execute("PRAGMA table_info(oix_result_outbox)")
+            }
+            migrations = {
+                "secure_envelope_json": "TEXT",
+                "secure_key_fingerprint": "TEXT",
+                "secure_created_at": "TEXT",
+            }
+            for column, declaration in migrations.items():
+                if column not in columns:
+                    db.execute(
+                        f"ALTER TABLE oix_result_outbox ADD COLUMN {column} {declaration}"
+                    )
 
     def _connect(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.database, timeout=5)
@@ -202,7 +221,132 @@ class SQLiteResultPublisher:
                 raise ResultChannelError("result approval changed during signing")
             return envelope
 
+    def encrypt_approved(
+        self,
+        task_id: str,
+        recipient_certificate: dict[str, Any],
+        recipient_signing_public_key: bytes,
+        *,
+        now: int | None = None,
+    ) -> dict[str, Any]:
+        """Encrypt and persist the approved signed result for its original peer.
+
+        The certificate must be verified against the original peer's trusted
+        Ed25519 key. Repeated calls with the same key reuse the exact wrapper.
+        """
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                """
+                SELECT sender,status,signed_envelope_json,signed_message_id,
+                       secure_envelope_json,secure_key_fingerprint
+                FROM oix_result_outbox WHERE task_id=?
+                """,
+                (task_id,),
+            ).fetchone()
+            if row is None:
+                raise ResultChannelError("result does not exist")
+            if row["status"] != "signed":
+                raise ResultChannelError("result must be signed before encryption")
+            if (
+                not verify_encryption_certificate(
+                    recipient_certificate, recipient_signing_public_key, now=now
+                )
+                or fingerprint(recipient_signing_public_key) != row["sender"]
+                or recipient_certificate["body"]["agent_id"] != row["sender"]
+            ):
+                raise ResultChannelError(
+                    "recipient encryption certificate does not match the original trusted peer"
+                )
+            key_fingerprint = encryption_key_fingerprint(recipient_certificate)
+            if (
+                row["secure_envelope_json"]
+                and row["secure_key_fingerprint"] == key_fingerprint
+            ):
+                return self._decode_persisted_secure_envelope(
+                    row["secure_envelope_json"], row["sender"], key_fingerprint
+                )
+            signed = self._decode_persisted_envelope(row)
+            secure = encrypt_envelope(
+                signed, recipient_certificate, recipient_signing_public_key, now=now
+            )
+            encoded = json.dumps(
+                secure, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            )
+            if len(encoded.encode("utf-8")) > MAX_SECURE_ENVELOPE_BYTES:
+                raise ResultChannelError("encrypted result exceeds the secure envelope limit")
+            db.execute(
+                """
+                UPDATE oix_result_outbox
+                SET secure_envelope_json=?,secure_key_fingerprint=?,secure_created_at=?
+                WHERE task_id=? AND status='signed' AND signed_message_id=?
+                """,
+                (
+                    encoded,
+                    key_fingerprint,
+                    datetime.now(UTC).isoformat(),
+                    task_id,
+                    row["signed_message_id"],
+                ),
+            )
+            return secure
+
+    def _decode_persisted_secure_envelope(
+        self, encoded: str, recipient: str, key_fingerprint: str
+    ) -> dict[str, Any]:
+        try:
+            secure = json.loads(encoded)
+        except (TypeError, ValueError) as exc:
+            raise ResultChannelError("persisted encrypted envelope is not valid JSON") from exc
+        header = secure.get("header", {}) if isinstance(secure, dict) else {}
+        if (
+            not isinstance(secure, dict)
+            or set(secure) != {"header", "ciphertext"}
+            or not isinstance(header, dict)
+            or header.get("protocol") != "OIX"
+            or header.get("version") != "1.0"
+            or header.get("sender") != self.local_agent_id
+            or header.get("recipient") != recipient
+            or header.get("recipient_key_fingerprint") != key_fingerprint
+            or not isinstance(secure.get("ciphertext"), str)
+            or len(encoded.encode("utf-8")) > MAX_SECURE_ENVELOPE_BYTES
+        ):
+            raise ResultChannelError("persisted encrypted envelope failed integrity checks")
+        return secure
+
+    def pending_secure_delivery(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        """Return only persisted encrypted wrappers ready for a future transport."""
+        if not 1 <= limit <= 1000:
+            raise ValueError("limit must be between 1 and 1000")
+        with self._connect() as db:
+            rows = db.execute(
+                """
+                SELECT task_id,sender,request_message_id,signed_message_id,
+                       secure_envelope_json,secure_key_fingerprint,created_at
+                FROM oix_result_outbox
+                WHERE status='signed' AND secure_envelope_json IS NOT NULL
+                ORDER BY created_at,task_id LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [
+            {
+                "task_id": row["task_id"],
+                "recipient": row["sender"],
+                "request_message_id": row["request_message_id"],
+                "message_id": row["signed_message_id"],
+                "envelope": self._decode_persisted_secure_envelope(
+                    row["secure_envelope_json"],
+                    row["sender"],
+                    row["secure_key_fingerprint"],
+                ),
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
+
     def pending_delivery(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        """Return plaintext signed messages for local inspection only, not network transport."""
         if not 1 <= limit <= 1000:
             raise ValueError("limit must be between 1 and 1000")
         with self._connect() as db:
@@ -234,7 +378,7 @@ class SQLiteResultPublisher:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute(
                 """
-                SELECT status,signed_message_id
+                SELECT status,signed_message_id,secure_envelope_json
                 FROM oix_result_outbox WHERE task_id=?
                 """,
                 (task_id,),
@@ -247,6 +391,8 @@ class SQLiteResultPublisher:
                 return False
             if row["status"] != "signed":
                 raise ResultChannelError("only a signed result can be marked delivered")
+            if not row["secure_envelope_json"]:
+                raise ResultChannelError("result must be encrypted before delivery")
             if row["signed_message_id"] != message_id:
                 raise ResultChannelError("delivery acknowledgement message ID mismatch")
             db.execute(
