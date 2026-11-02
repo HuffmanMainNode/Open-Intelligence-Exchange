@@ -2,7 +2,6 @@ import pytest
 
 from oix import discovery, discovery_exchange, gossip, identity
 
-
 NOW = 1_700_000_000
 
 
