@@ -73,7 +73,7 @@ class SQLitePeerKeyStore:
             db.execute("BEGIN IMMEDIATE")
             active = db.execute(
                 "SELECT key_fingerprint,issued_at FROM peer_encryption_keys "
-                "WHERE agent_id=? AND status IN ('active','superseded')", (agent_id,)
+                "WHERE agent_id=? AND status='active'", (agent_id,)
             ).fetchone()
             if active and active["key_fingerprint"] == key_fp:
                 db.commit()
