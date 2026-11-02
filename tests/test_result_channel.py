@@ -6,6 +6,7 @@ import pytest
 from oix.envelope import verify_message
 from oix.identity import generate_identity, load_private_key
 from oix.inbox import SQLiteInbox
+from oix.receipts import create_delivery_receipt, message_digest
 from oix.result_channel import (
     ResultChannelError,
     ResultSchemaError,
@@ -161,14 +162,27 @@ def test_delivery_acknowledgement_is_bound_to_persisted_message_id(tmp_path):
     envelope = publisher.sign_approved("task-123")
     message_id = envelope["body"]["message_id"]
     with pytest.raises(ResultChannelError, match="must be encrypted"):
-        publisher.mark_delivered("task-123", message_id)
-    publisher.encrypt_approved(
+        publisher.mark_delivered("task-123", {}, b"")
+    secure = publisher.encrypt_approved(
         "task-123", peer_certificate, peer_key.public_key().public_bytes_raw()
     )
-    with pytest.raises(ResultChannelError, match="message ID mismatch"):
-        publisher.mark_delivered("task-123", "wrong-id")
-    assert publisher.mark_delivered("task-123", message_id) is True
-    assert publisher.mark_delivered("task-123", message_id) is False
+    digest = message_digest(secure)
+    wrong_receipt = create_delivery_receipt(
+        peer_key, local_card["card"]["agent_id"], "wrong-id", digest, accepted_at=1234
+    )
+    with pytest.raises(ResultChannelError, match="receipt signature or message binding"):
+        publisher.mark_delivered(
+            "task-123", wrong_receipt, peer_key.public_key().public_bytes_raw()
+        )
+    receipt = create_delivery_receipt(
+        peer_key, local_card["card"]["agent_id"], message_id, digest, accepted_at=1234
+    )
+    assert publisher.mark_delivered(
+        "task-123", receipt, peer_key.public_key().public_bytes_raw()
+    ) is True
+    assert publisher.mark_delivered(
+        "task-123", receipt, peer_key.public_key().public_bytes_raw()
+    ) is False
     assert publisher.pending_delivery() == []
 
 

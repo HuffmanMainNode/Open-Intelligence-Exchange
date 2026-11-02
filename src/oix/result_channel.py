@@ -15,6 +15,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from .envelope import create_message, verify_message
 from .identity import fingerprint
+from .receipts import message_digest, verify_delivery_receipt
 from .secure_transport import (
     MAX_SECURE_ENVELOPE_BYTES,
     encrypt_envelope,
@@ -65,6 +66,9 @@ class SQLiteResultPublisher:
                 "secure_envelope_json": "TEXT",
                 "secure_key_fingerprint": "TEXT",
                 "secure_created_at": "TEXT",
+                "receipt_envelope_json": "TEXT",
+                "receipt_message_id": "TEXT",
+                "receipt_content_digest": "TEXT",
             }
             for column, declaration in migrations.items():
                 if column not in columns:
@@ -372,35 +376,63 @@ class SQLiteResultPublisher:
             for row in rows
         ]
 
-    def mark_delivered(self, task_id: str, message_id: str) -> bool:
-        """Record transport acknowledgement for the exact persisted envelope."""
+    def mark_delivered(
+        self,
+        task_id: str,
+        receipt_envelope: dict[str, Any],
+        peer_signing_public_key: bytes,
+    ) -> bool:
+        """Finalize delivery only after a signed, content-bound peer receipt."""
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute(
                 """
-                SELECT status,signed_message_id,secure_envelope_json
+                SELECT sender,status,signed_message_id,secure_envelope_json,
+                       secure_key_fingerprint,receipt_message_id
                 FROM oix_result_outbox WHERE task_id=?
                 """,
                 (task_id,),
             ).fetchone()
             if row is None:
                 raise ResultChannelError("result does not exist")
-            if row["status"] == "delivered":
-                if row["signed_message_id"] != message_id:
-                    raise ResultChannelError("delivery acknowledgement message ID mismatch")
-                return False
-            if row["status"] != "signed":
+            if row["status"] not in {"signed", "delivered"}:
                 raise ResultChannelError("only a signed result can be marked delivered")
             if not row["secure_envelope_json"]:
                 raise ResultChannelError("result must be encrypted before delivery")
-            if row["signed_message_id"] != message_id:
-                raise ResultChannelError("delivery acknowledgement message ID mismatch")
+            secure = self._decode_persisted_secure_envelope(
+                row["secure_envelope_json"], row["sender"], row["secure_key_fingerprint"]
+            )
+            digest = message_digest(secure)
+            if not verify_delivery_receipt(
+                receipt_envelope,
+                peer_signing_public_key,
+                expected_recipient_agent_id=row["sender"],
+                expected_sender_agent_id=self.local_agent_id,
+                expected_message_id=row["signed_message_id"],
+                expected_content_digest=digest,
+            ):
+                raise ResultChannelError("delivery receipt signature or message binding is invalid")
+            receipt_id = receipt_envelope["body"]["message_id"]
+            if row["status"] == "delivered":
+                if row["receipt_message_id"] != receipt_id:
+                    raise ResultChannelError("a different receipt already finalized delivery")
+                return False
+            encoded_receipt = json.dumps(
+                receipt_envelope, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            )
             db.execute(
                 """
                 UPDATE oix_result_outbox
-                SET status='delivered',delivered_at=?
+                SET status='delivered',delivered_at=?,receipt_envelope_json=?,
+                    receipt_message_id=?,receipt_content_digest=?
                 WHERE task_id=? AND status='signed'
                 """,
-                (datetime.now(UTC).isoformat(), task_id),
+                (
+                    datetime.now(UTC).isoformat(),
+                    encoded_receipt,
+                    receipt_id,
+                    digest,
+                    task_id,
+                ),
             )
         return True
