@@ -18,7 +18,7 @@ from .identity import fingerprint
 MAX_MESSAGE_BYTES = 1_000_000
 ALLOWED_TYPES = {
     "agent.hello", "agent.hello_ack", "task.request", "task.accepted",
-    "task.progress", "task.result", "evidence.submit", "error",
+    "task.progress", "task.result", "evidence.submit", "error", "delivery.receipt",
 }
 
 
