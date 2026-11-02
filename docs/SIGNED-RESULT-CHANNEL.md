@@ -112,3 +112,10 @@ This is durable local staging, not exactly-once network delivery. A future trans
 ## Validation boundary
 
 The cross-repository demonstration signs a real OIX `task.request`, receives it through the real `SQLiteInbox`, explicitly approves it, hands it to Open-Swarm, executes the local mock adapter, stages the terminal result, approves the result, signs a `task.result`, and verifies its signature and original recipient. It does not transmit the result or claim remote delivery.
+
+
+## Encrypted result staging
+
+The Phase 4 publisher can also encrypt an approved signed result for the original peer. `encrypt_approved()` verifies that the peer's X25519 certificate is signed by the Ed25519 identity associated with the original request, then persists the encrypted wrapper and key fingerprint. `pending_secure_delivery()` exposes only these persisted encrypted wrappers. Repeated calls with the same recipient key reuse the stored wrapper. If the peer rotates its encryption key, the same signed result can be re-encrypted without changing its inner message ID.
+
+`pending_delivery()` is plaintext local inspection only. Do not use it as a network transport source. A future transport must use `pending_secure_delivery()` and authenticate the recipient acknowledgement before calling `mark_delivered()`. The publisher adds nullable secure-envelope columns to existing Phase 3 result-outbox databases when initialized.
