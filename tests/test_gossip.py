@@ -1,9 +1,9 @@
 import pytest
 
-import oix.discovery as discovery
-import oix.discovery_exchange as discovery_exchange
-import oix.gossip as gossip
-import oix.identity as identity
+from oix import discovery
+from oix import discovery_exchange
+from oix import gossip
+from oix import identity
 
 
 NOW = 1_700_000_000
