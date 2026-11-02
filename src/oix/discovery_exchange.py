@@ -10,7 +10,11 @@ import uuid
 from typing import Any
 
 from .canonical import canonical_json
-from .discovery import DiscoveryError, SQLiteDiscoveryStore, _validate_timestamp
+from .discovery import (
+    DiscoveryError,
+    SQLiteDiscoveryStore,
+    _validate_timestamp,
+)
 
 MAX_EXCHANGE_RECORDS = 64
 MAX_EXCHANGE_BYTES = 512 * 1024
@@ -22,13 +26,24 @@ class ExchangeError(ValueError):
 
 
 def _validate_batch_id(value: Any) -> None:
-    if not isinstance(value, str) or str(uuid.UUID(value)) != value:
+    try:
+        valid = isinstance(value, str) and str(uuid.UUID(value)) == value
+    except ValueError:
+        valid = False
+    if not valid:
         raise ExchangeError("batch_id must be a canonical UUID")
+
+
+def _validate_timestamp_value(value: Any, field: str) -> None:
+    try:
+        _validate_timestamp(value, field)
+    except DiscoveryError as exc:
+        raise ExchangeError(str(exc)) from exc
 
 
 def create_exchange_batch(records: list[dict[str, Any]], *, now: int) -> dict[str, Any]:
     """Package signed announcement/card pairs for forwarding by an untrusted relay."""
-    _validate_timestamp(now, "now")
+    _validate_timestamp_value(now, "now")
     if not isinstance(records, list) or not 1 <= len(records) <= MAX_EXCHANGE_RECORDS:
         raise ExchangeError(f"records must contain 1 to {MAX_EXCHANGE_RECORDS} entries")
     for item in records:
@@ -62,10 +77,7 @@ def inspect_exchange_batch(batch: dict[str, Any], *, now: int) -> tuple[list[dic
     if body["protocol"] != "OIX-DISCOVERY-EXCHANGE" or body["protocol_version"] != "0.1":
         raise ExchangeError("unsupported discovery exchange protocol")
     _validate_batch_id(body["batch_id"])
-    try:
-        _validate_timestamp(body["created_at"], "created_at")
-    except DiscoveryError as exc:
-        raise ExchangeError(str(exc)) from exc
+    _validate_timestamp_value(body["created_at"], "created_at")
     if body["created_at"] > now + MAX_EXCHANGE_FUTURE_SKEW_SECONDS:
         raise ExchangeError("batch creation time is too far in the future")
     records = body["records"]
