@@ -268,9 +268,11 @@ class SQLiteResultPublisher:
             if (
                 row["secure_envelope_json"]
                 and row["secure_key_fingerprint"] == key_fingerprint
+                and row["secure_mode"] in {None, "static_x25519"}
             ):
                 return self._decode_persisted_secure_envelope(
-                    row["secure_envelope_json"], row["sender"], key_fingerprint
+                    row["secure_envelope_json"], row["sender"], key_fingerprint,
+                    mode="static_x25519",
                 )
             signed = self._decode_persisted_envelope(row)
             secure = encrypt_envelope(
@@ -284,7 +286,8 @@ class SQLiteResultPublisher:
             db.execute(
                 """
                 UPDATE oix_result_outbox
-                SET secure_envelope_json=?,secure_key_fingerprint=?,secure_created_at=?
+                SET secure_envelope_json=?,secure_key_fingerprint=?,secure_created_at=?,
+                    secure_mode='static_x25519'
                 WHERE task_id=? AND status='signed' AND signed_message_id=?
                 """,
                 (
