@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://huffmanmainnode.github.io/Open-Intelligence-Exchange/schemas/discovery-exchange.schema.json",
+  "title": "OIX v0.1 discovery exchange batch",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["exchange"],
+  "properties": {
+    "exchange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocol", "protocol_version", "batch_id", "created_at", "records"],
+      "properties": {
+        "protocol": {"const": "OIX-DISCOVERY-EXCHANGE"},
+        "protocol_version": {"const": "0.1"},
+        "batch_id": {"type": "string", "format": "uuid"},
+        "created_at": {"type": "integer", "minimum": 0},
+        "records": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["announcement", "card"],
+            "properties": {
+              "announcement": {"$ref": "discovery-announcement.schema.json"},
+              "card": {"type": "object"}
+            }
+          }
+        }
+      }
+    }
+  }
+}
