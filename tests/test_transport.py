@@ -20,9 +20,9 @@ from oix.transport import (
     MAX_FRAME_BYTES,
     OIXMutualTLSServer,
     TransportError,
+    agent_identity_uri,
     encode_frame,
     read_frame,
-    agent_identity_uri,
     send_encrypted_envelope,
 )
 
