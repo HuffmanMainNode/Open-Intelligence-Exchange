@@ -7,13 +7,16 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import time
 import uuid
 from contextlib import closing
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from .canonical import canonical_json
 from .envelope import ALLOWED_TYPES, MAX_MESSAGE_BYTES, verify_for_recipient
@@ -54,6 +57,111 @@ class InboxReceipt:
     duplicate: bool
     work_id: str | None
     work_status: str | None
+
+
+def _validate_rfc3339(value: Any, field: str, *, nullable: bool = False) -> None:
+    if value is None and nullable:
+        return
+    if not isinstance(value, str) or not value or len(value) > 64:
+        raise InboxError(f"{field} must be an RFC 3339 timestamp")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            raise ValueError("timezone required")
+    except ValueError as exc:
+        raise InboxError(f"{field} must be an RFC 3339 timestamp with timezone") from exc
+
+
+def _validate_evidence_submit_payload(payload: dict[str, Any]) -> None:
+    """Validate the strict, metadata-only evidence.submit 1.0 payload contract."""
+    fields = {
+        "schema_version", "evidence_id", "evidence_type", "source_uri",
+        "source_timestamp", "collected_at", "collector", "method", "artifact",
+        "classification", "status", "summary", "limitations",
+    }
+    if set(payload) != fields:
+        raise InboxError("evidence.submit payload fields do not match schema 1.0")
+    if payload.get("schema_version") != "1.0":
+        raise InboxError("unsupported evidence.submit schema version")
+    evidence_id = payload.get("evidence_id")
+    try:
+        if not isinstance(evidence_id, str) or str(uuid.UUID(evidence_id)) != evidence_id:
+            raise ValueError
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise InboxError("evidence_id must be a canonical lowercase UUID") from exc
+    if payload.get("evidence_type") not in {
+        "file_manifest", "domain_observation", "transaction_analysis",
+        "evm_transaction_inspection", "sbom_analysis",
+    }:
+        raise InboxError("unsupported evidence_type")
+    source_uri = payload.get("source_uri")
+    if source_uri is not None:
+        if not isinstance(source_uri, str) or len(source_uri) > 2048:
+            raise InboxError("source_uri must be null or a bounded HTTPS URL")
+        parsed = urlsplit(source_uri)
+        if (
+            parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+        ):
+            raise InboxError("source_uri must be an HTTPS URL without embedded credentials")
+    _validate_rfc3339(payload.get("source_timestamp"), "source_timestamp", nullable=True)
+    _validate_rfc3339(payload.get("collected_at"), "collected_at")
+
+    for field in ("collector", "method"):
+        value = payload.get(field)
+        if (
+            not isinstance(value, dict)
+            or set(value) != {"name", "version"}
+            or not isinstance(value.get("name"), str)
+            or not 1 <= len(value["name"]) <= 128
+            or not isinstance(value.get("version"), str)
+            or not 1 <= len(value["version"]) <= 32
+        ):
+            raise InboxError(f"{field} must contain bounded name and version fields")
+
+    artifact = payload.get("artifact")
+    if (
+        not isinstance(artifact, dict)
+        or set(artifact) != {"sha256", "size_bytes", "media_type"}
+        or not isinstance(artifact.get("sha256"), str)
+        or not re.fullmatch(r"[a-f0-9]{64}", artifact["sha256"])
+        or not isinstance(artifact.get("size_bytes"), int)
+        or isinstance(artifact["size_bytes"], bool)
+        or not 0 <= artifact["size_bytes"] <= 1_000_000_000_000
+        or not isinstance(artifact.get("media_type"), str)
+        or not re.fullmatch(
+            r"[A-Za-z0-9!#class SQLiteInbox:
+^_.+-]+/[A-Za-z0-9!#class SQLiteInbox:
+^_.+-]+",
+            artifact["media_type"],
+        )
+    ):
+        raise InboxError("artifact must contain a SHA-256, bounded size, and media type")
+
+    if payload.get("classification") not in {"public", "internal", "restricted"}:
+        raise InboxError("classification must be public, internal, or restricted")
+    if payload.get("status") not in {"observed", "derived", "unverified"}:
+        raise InboxError("evidence status is invalid")
+    summary = payload.get("summary")
+    if not isinstance(summary, dict) or not 1 <= len(summary) <= 64:
+        raise InboxError("summary must be an object with 1 to 64 properties")
+    try:
+        if len(canonical_json(summary)) > 32_768:
+            raise InboxError("summary exceeds 32768 bytes")
+    except (TypeError, ValueError, RecursionError) as exc:
+        raise InboxError("summary must contain deterministic JSON values") from exc
+    limitations = payload.get("limitations")
+    if (
+        not isinstance(limitations, list)
+        or not 1 <= len(limitations) <= 32
+        or any(
+            not isinstance(item, str) or not 1 <= len(item) <= 512
+            for item in limitations
+        )
+    ):
+        raise InboxError("limitations must contain 1 to 32 bounded strings")
 
 
 class SQLiteInbox:
@@ -235,6 +343,8 @@ class SQLiteInbox:
         message_type = body.get("type")
         if not isinstance(message_type, str) or message_type not in ALLOWED_TYPES:
             raise InboxError("unsupported message type")
+        if message_type == "evidence.submit":
+            _validate_evidence_submit_payload(body["payload"])
         message_id = body.get("message_id")
         try:
             if not isinstance(message_id, str) or str(uuid.UUID(message_id)) != message_id:
