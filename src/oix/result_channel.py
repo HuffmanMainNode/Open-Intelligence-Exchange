@@ -13,7 +13,7 @@ from typing import Any
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from .envelope import create_message
+from .envelope import create_message, verify_message
 from .identity import fingerprint
 
 
@@ -57,7 +57,25 @@ class SQLiteResultPublisher:
         db = sqlite3.connect(self.database, timeout=5)
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA busy_timeout=5000")
+        db.execute("PRAGMA foreign_keys=ON")
         return db
+
+    def _decode_persisted_envelope(self, row: sqlite3.Row) -> dict[str, Any]:
+        try:
+            envelope = json.loads(row["signed_envelope_json"])
+        except (TypeError, ValueError) as exc:
+            raise ResultChannelError("persisted signed envelope is not valid JSON") from exc
+        public_key = self.private_key.public_key().public_bytes_raw()
+        body = envelope.get("body", {}) if isinstance(envelope, dict) else {}
+        if (
+            not verify_message(envelope, public_key)
+            or body.get("sender") != self.local_agent_id
+            or body.get("recipient") != row["sender"]
+            or body.get("type") != "task.result"
+            or body.get("message_id") != row["signed_message_id"]
+        ):
+            raise ResultChannelError("persisted signed envelope failed integrity checks")
+        return envelope
 
     @staticmethod
     def _require_schema(db: sqlite3.Connection) -> None:
@@ -148,7 +166,7 @@ class SQLiteResultPublisher:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute(
                 """
-                SELECT sender,payload_json,status,signed_envelope_json
+                SELECT sender,payload_json,status,signed_envelope_json,signed_message_id
                 FROM oix_result_outbox WHERE task_id=?
                 """,
                 (task_id,),
@@ -158,7 +176,7 @@ class SQLiteResultPublisher:
             if row["status"] in {"signed", "delivered"}:
                 if not row["signed_envelope_json"]:
                     raise ResultChannelError("signed result is missing its persisted envelope")
-                return json.loads(row["signed_envelope_json"])
+                return self._decode_persisted_envelope(row)
             if row["status"] != "approved":
                 raise ResultChannelError("result must be operator-approved before signing")
             payload = json.loads(row["payload_json"])
@@ -204,7 +222,7 @@ class SQLiteResultPublisher:
                 "sender": row["sender"],
                 "request_message_id": row["request_message_id"],
                 "message_id": row["signed_message_id"],
-                "envelope": json.loads(row["signed_envelope_json"]),
+                "envelope": self._decode_persisted_envelope(row),
                 "created_at": row["created_at"],
             }
             for row in rows
