@@ -1,12 +1,14 @@
 import json
 import sqlite3
+import time
 
 import pytest
 
 from oix.envelope import verify_message
 from oix.identity import generate_identity, load_private_key
 from oix.inbox import SQLiteInbox
-from oix.prekeys import SQLitePreKeyStore, create_prekey_bundle\nfrom oix.receipts import create_delivery_receipt, message_digest
+from oix.prekeys import SQLitePreKeyStore, create_prekey_bundle
+from oix.receipts import create_delivery_receipt, message_digest
 from oix.result_channel import (
     ResultChannelError,
     ResultSchemaError,
