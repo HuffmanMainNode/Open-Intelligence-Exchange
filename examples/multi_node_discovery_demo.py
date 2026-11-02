@@ -119,7 +119,7 @@ def _create_test_pki(root: Path, node_a_id: str, node_b_id: str) -> dict[str, Pa
         usage=ExtendedKeyUsageOID.CLIENT_AUTH, server=False, directory=root,
     )
     b_cert, b_key = _issue_certificate(
-        ca_key, ca_name, common_name="localhost", agent_id=node_b_id,
+        ca_key, ca_name, ca_cert, common_name="localhost", agent_id=node_b_id,
         usage=ExtendedKeyUsageOID.SERVER_AUTH, server=True, directory=root,
     )
     return {
