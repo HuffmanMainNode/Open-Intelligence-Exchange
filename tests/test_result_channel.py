@@ -6,7 +6,7 @@ import pytest
 from oix.envelope import verify_message
 from oix.identity import generate_identity, load_private_key
 from oix.inbox import SQLiteInbox
-from oix.receipts import create_delivery_receipt, message_digest
+from oix.prekeys import SQLitePreKeyStore, create_prekey_bundle\nfrom oix.receipts import create_delivery_receipt, message_digest
 from oix.result_channel import (
     ResultChannelError,
     ResultSchemaError,
@@ -307,4 +307,53 @@ def test_result_cannot_be_encrypted_to_a_different_peer(tmp_path):
             wrong_certificate,
             wrong_key.public_key().public_bytes_raw(),
         )
+    assert publisher.pending_secure_delivery() == []
+
+def test_result_publisher_persists_prekey_envelope_and_requires_signed_receipt(tmp_path):
+    local_key, local_card = _identity(tmp_path, "local")
+    peer_key, peer_card = _identity(tmp_path, "peer")
+    peer_id = peer_card["card"]["agent_id"]
+    database = tmp_path / "shared.sqlite3"
+    _result_database(
+        database,
+        sender=local_card["card"]["agent_id"],
+        peer=peer_id,
+    )
+    publisher = SQLiteResultPublisher(
+        database, local_card["card"]["agent_id"], local_key
+    )
+    publisher.decide("task-123", approve=True)
+    signed = publisher.sign_approved("task-123")
+    peer_store = SQLitePreKeyStore(tmp_path / "peer-prekeys.sqlite3")
+    bundle = create_prekey_bundle(peer_store, peer_key, count=3)
+
+    secure = publisher.encrypt_approved_with_prekey(
+        "task-123", bundle, peer_key.public_key().public_bytes_raw()
+    )
+    retry = publisher.encrypt_approved_with_prekey(
+        "task-123", bundle, peer_key.public_key().public_bytes_raw()
+    )
+    assert retry == secure
+    assert secure["header"]["mode"] == "one_time_prekey"
+    pending = publisher.pending_secure_delivery()
+    assert len(pending) == 1
+    assert pending[0]["envelope"] == secure
+
+    opened = peer_store.consume_and_decrypt(
+        secure,
+        peer_key.public_key().public_bytes_raw(),
+        local_key.public_key().public_bytes_raw(),
+        peer_id,
+    )
+    assert opened == signed
+    receipt = create_delivery_receipt(
+        peer_key,
+        local_card["card"]["agent_id"],
+        signed["body"]["message_id"],
+        message_digest(secure),
+        accepted_at=int(time.time()),
+    )
+    assert publisher.mark_delivered(
+        "task-123", receipt, peer_key.public_key().public_bytes_raw()
+    )
     assert publisher.pending_secure_delivery() == []
