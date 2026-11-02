@@ -13,6 +13,7 @@ import json
 import logging
 import re
 import ssl
+import time
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
@@ -22,11 +23,19 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from .canonical import canonical_json
 from .identity import fingerprint
+from .discovery import SQLiteDiscoveryStore
+from .discovery_exchange import (
+    MAX_EXCHANGE_BYTES,
+    ExchangeError,
+    ingest_exchange_batch,
+    inspect_exchange_batch,
+)
 from .inbox import SQLiteInbox
 from .prekeys import MAX_PREKEY_ENVELOPE_BYTES, SQLitePreKeyStore
 from .receipts import message_digest, verify_delivery_receipt
 
 MAX_FRAME_BYTES = MAX_PREKEY_ENVELOPE_BYTES
+MAX_DISCOVERY_FRAME_BYTES = MAX_EXCHANGE_BYTES
 MAX_STREAM_MESSAGES = 100
 FRAME_HEADER_BYTES = 4
 MIN_TLS_VERSION = ssl.TLSVersion.TLSv1_2
@@ -436,17 +445,6 @@ async def send_encrypted_envelope(
 
 # Discovery exchange transport is separate from the encrypted task-message inbox.
 # A relay may carry signed public discovery records without being trusted to execute work.
-from .discovery import SQLiteDiscoveryStore
-from .discovery_exchange import (
-    MAX_EXCHANGE_BYTES,
-    ExchangeError,
-    ingest_exchange_batch,
-    inspect_exchange_batch,
-)
-
-MAX_DISCOVERY_FRAME_BYTES = MAX_EXCHANGE_BYTES
-
-
 class OIXDiscoveryExchangeServer:
     """Receive bounded signed-discovery batches from explicitly approved TLS relays.
 
@@ -531,7 +529,7 @@ class OIXDiscoveryExchangeServer:
                 ingest_exchange_batch,
                 batch,
                 self.store,
-                now=__import__("time").time_ns() // 1_000_000_000,
+                now=int(time.time()),
             )
             acknowledgement = {
                 "protocol": "OIX-DISCOVERY-ACK",
