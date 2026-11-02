@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import json
+import logging
 import ssl
 from contextlib import suppress
 from pathlib import Path
@@ -26,6 +27,7 @@ from .receipts import message_digest, verify_delivery_receipt
 MAX_FRAME_BYTES = MAX_PREKEY_ENVELOPE_BYTES
 FRAME_HEADER_BYTES = 4
 MIN_TLS_VERSION = ssl.TLSVersion.TLSv1_2
+logger = logging.getLogger(__name__)
 
 
 class TransportError(RuntimeError):
@@ -72,7 +74,7 @@ async def read_frame(
         if not isinstance(value, dict) or canonical_json(value) != payload:
             raise TransportError("transport frame is not a canonical JSON object")
         return value
-    except asyncio.TimeoutError as exc:
+    except TimeoutError as exc:
         raise TransportError("transport frame read timed out") from exc
     except asyncio.IncompleteReadError as exc:
         raise TransportError("transport frame was truncated") from exc
@@ -201,9 +203,9 @@ class OIXMutualTLSServer:
                 self.signing_private_key,
             )
             await write_frame(writer, receipt, timeout_seconds=self.timeout_seconds)
-        except Exception:
-            # Deliberately do not return parser, trust-store, or cryptographic details.
-            pass
+        except Exception as exc:  # noqa: BLE001
+            # Log only the exception class; never disclose parser or cryptographic details.
+            logger.warning("OIX transport request rejected (%s)", type(exc).__name__)
         finally:
             if acquired:
                 self._semaphore.release()
