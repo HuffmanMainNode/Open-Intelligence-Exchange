@@ -57,7 +57,7 @@ A networked deployment should add authenticated TLS, strict request timeouts, co
 - Confidentiality or end-to-end encryption
 - Secure key storage hardware integration
 - Key revocation distribution and recovery
-- Persistent replay protection
+- Multi-host or distributed replay coordination
 - Production peer discovery or relay
 - Full MCP or A2A conformance
 - Formal verification or third-party security certification
