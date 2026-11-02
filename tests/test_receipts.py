@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from oix.identity import generate_identity, load_private_key
 from oix.envelope import create_message
+from oix.identity import generate_identity, load_private_key
 from oix.receipts import create_delivery_receipt, message_digest, verify_delivery_receipt
 
 
