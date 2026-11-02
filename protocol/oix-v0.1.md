@@ -76,15 +76,17 @@ OIX core MUST NOT execute received code, invoke arbitrary shell commands, or gra
 ## 8. Evidence object
 
 Evidence records SHOULD include:
-- content SHA-256
-- source URI
-- collection timestamp and source timestamp if known
+- content SHA-256 and artifact size/media type
+- source URI and source timestamp when known
+- collection timestamp
 - collector identifier and version
-- collection method
-- status: `observed`, `verified`, `unverified`, `disputed`, or `unknown`
-- limitations and context
+- collection method and version
+- status: `observed`, `derived`, or `unverified`
+- classification, concise machine-readable summary, and explicit limitations
 
-`observed` means collected by the named method; it does not mean true. `verified` requires a documented validation method and criteria. A hash proves byte-level integrity relative to the supplied digest, not source authenticity or truth.
+`observed` means collected by the named method; it does not mean true. `derived` means computed from other observations and must preserve those provenance references. `unverified` means the artifact has not passed a documented validation procedure. A hash proves byte-level integrity relative to the supplied digest, not source authenticity or truth.
+
+The reference inbox enforces the versioned `evidence.submit` payload in [evidence-submit.schema.json](../schemas/evidence-submit.schema.json). The payload is metadata-only: it carries an artifact digest, size, media type, and bounded summary, not raw artifact bytes or local filesystem paths. A non-null source URI must be HTTPS and contain no embedded credentials. The receiver validates this schema before creating an approval-gated `pending_review` work item. A valid message signature does not approve or verify the evidence.
 
 ## 9. Transport and discovery
 

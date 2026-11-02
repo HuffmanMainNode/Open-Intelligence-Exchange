@@ -22,12 +22,12 @@ OIX is not a chatbot, hosted agent, model, or mandatory network. It is a small i
 | Experimental network transport | Bounded persistent mutual-TLS sessions, certificate URI SAN bound to OIX agent fingerprints, encrypted one-time-prekey envelopes, durable signed acknowledgements with per-message backpressure |
 | Replay defense | Bounded in-memory cache, durable SQLite replay cache, and trusted-peer inbox replay controls |
 | Authorization | Explicit capability allow-list and approval-gated durable inbound work queue |
-| Evidence records | Provenance fields, content hashes, evidence status |
+| Evidence records | Strict metadata-only evidence.submit 1.0 schema, provenance, artifact hashes, limitations, and approval-gated review |
 | CLI | Identity generation, card inspection, message signing and verification |
 | Demo | Two local independent agent processes exchange and verify a signed message |
 | Quality gates | pytest, Ruff, Bandit, GitHub Actions |
 
-See [Mutual-TLS Transport](docs/MUTUAL-TLS-TRANSPORT.md) for the experimental TCP adapter, setup requirements, and security boundaries. The core library remains usable without network transport.
+See [Evidence Submission Schema](schemas/evidence-submit.schema.json) for the strict evidence payload contract. See [Mutual-TLS Transport](docs/MUTUAL-TLS-TRANSPORT.md) for the experimental TCP adapter, setup requirements, and security boundaries. The core library remains usable without network transport.
 
 ## Quick start
 

@@ -133,9 +133,13 @@ def test_evidence_is_review_gated_and_no_payload_is_executed(tmp_path):
     inbox = SQLiteInbox(tmp_path / "inbox.sqlite3", "local-agent",
                         CapabilityPolicy({"evidence.submit"}))
     inbox.trust_peer(sender_card)
-    message = create_message(sender_key, "local-agent", "evidence.submit",
-                             {"source_uri": "https://example.org", "claim": "unverified"},
-                             capability="evidence.submit")
+    message = create_message(
+        sender_key,
+        "local-agent",
+        "evidence.submit",
+        valid_evidence_payload(),
+        capability="evidence.submit",
+    )
     receipt = inbox.receive(message)
     assert receipt.work_status == "pending_review"
     assert inbox.pending_work()[0]["status"] == "pending_review"
@@ -185,3 +189,92 @@ def test_inbox_and_work_creation_roll_back_together(tmp_path):
     with sqlite3.connect(database) as db:
         assert db.execute("SELECT COUNT(*) FROM inbox_messages").fetchone()[0] == 0
         assert db.execute("SELECT COUNT(*) FROM inbound_work").fetchone()[0] == 0
+
+
+def valid_evidence_payload():
+    return {
+        "schema_version": "1.0",
+        "evidence_id": "4b3b7a6f-3e5a-4a6d-9f0b-2d9f1c6a7e80",
+        "evidence_type": "domain_observation",
+        "source_uri": "https://example.org/security-advisory",
+        "source_timestamp": None,
+        "collected_at": "2026-11-02T00:00:00Z",
+        "collector": {"name": "halloween-osint-2026", "version": "0.1.0"},
+        "method": {"name": "dns-tls-observation", "version": "1.0"},
+        "artifact": {
+            "sha256": "a" * 64,
+            "size_bytes": 2048,
+            "media_type": "application/json",
+        },
+        "classification": "public",
+        "status": "observed",
+        "summary": {"record_count": 2, "observation_kind": "domain_infrastructure"},
+        "limitations": [
+            "The digest identifies the artifact bytes but does not prove source authenticity."
+        ],
+    }
+
+
+def test_evidence_submit_requires_strict_metadata_contract_and_operator_review(tmp_path):
+    sender_key, sender_card = make_agent(tmp_path, "evidence-sender", ["public.research"])
+    inbox = SQLiteInbox(
+        tmp_path / "inbox.sqlite3",
+        "local-agent",
+        CapabilityPolicy({"public.research"}),
+    )
+    inbox.trust_peer(sender_card)
+    message = create_message(
+        sender_key,
+        "local-agent",
+        "evidence.submit",
+        valid_evidence_payload(),
+        capability="public.research",
+    )
+    receipt = inbox.receive(message)
+    assert receipt.work_status == "pending_review"
+    work = inbox.pending_work()[0]
+    assert work["work_type"] == "evidence.submit"
+    assert work["payload"] == valid_evidence_payload()
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda payload: payload.update({"unexpected": "field"}),
+        lambda payload: payload.update({"source_uri": "file:///etc/passwd"}),
+        lambda payload: payload["artifact"].update({"sha256": "not-a-digest"}),
+        lambda payload: payload.update({"collected_at": "2026-11-02T00:00:00"}),
+        lambda payload: payload.update({"schema_version": "2.0"}),
+        lambda payload: payload.update({"limitations": []}),
+        lambda payload: payload["artifact"].update({"size_bytes": True}),
+    ],
+)
+def test_evidence_submit_rejects_malformed_or_unsafe_payload(tmp_path, mutate):
+    sender_key, sender_card = make_agent(tmp_path, "evidence-sender", ["public.research"])
+    inbox = SQLiteInbox(
+        tmp_path / "inbox.sqlite3",
+        "local-agent",
+        CapabilityPolicy({"public.research"}),
+    )
+    inbox.trust_peer(sender_card)
+    payload = valid_evidence_payload()
+    mutate(payload)
+    message = create_message(
+        sender_key,
+        "local-agent",
+        "evidence.submit",
+        payload,
+        capability="public.research",
+    )
+    with pytest.raises(InboxError):
+        inbox.receive(message)
+    assert inbox.pending_work() == []
+
+
+def test_evidence_payload_validator_rejects_floating_point_summary():
+    from oix.inbox import validate_evidence_submit_payload
+
+    payload = valid_evidence_payload()
+    payload["summary"]["unsafe_float"] = 1.25
+    with pytest.raises(InboxError, match="deterministic JSON"):
+        validate_evidence_submit_payload(payload)
