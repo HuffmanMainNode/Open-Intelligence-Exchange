@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://huffmanmainnode.github.io/Open-Intelligence-Exchange/schemas/delivery-receipt.schema.json",
+  "title": "OIX signed durable delivery receipt",
+  "allOf": [
+    { "$ref": "message.schema.json" },
+    {
+      "properties": {
+        "body": {
+          "properties": {
+            "type": { "const": "delivery.receipt" },
+            "payload": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "acknowledged_message_id",
+                "acknowledged_content_digest",
+                "accepted_at",
+                "durable",
+                "status"
+              ],
+              "properties": {
+                "acknowledged_message_id": { "type": "string", "format": "uuid" },
+                "acknowledged_content_digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+                "accepted_at": { "type": "integer", "minimum": 0 },
+                "durable": { "const": true },
+                "status": { "const": "accepted" }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}
