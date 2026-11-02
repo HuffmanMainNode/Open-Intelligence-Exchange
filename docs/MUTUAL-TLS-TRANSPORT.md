@@ -4,13 +4,14 @@ Status: experimental transport adapter. The protocol remains usable without this
 
 ## Scope
 
-The oix.transport module provides a bounded, one-message-per-connection TCP transport for encrypted OIX one-time-prekey envelopes. It uses Python standard ssl and asyncio libraries. The server requires a client certificate signed by a locally configured CA; clients validate the server certificate and hostname. TLS 1.2 or newer is required.
+The oix.transport module provides a bounded persistent TCP session for encrypted OIX one-time-prekey envelopes. A session is bound to one authenticated OIX peer identity and can carry multiple sequential request/receipt frames. It uses Python standard ssl and asyncio libraries. The server requires a client certificate signed by a locally configured CA; clients validate the server certificate and hostname. TLS 1.2 or newer is required.
 
 The transport does not replace OIX identity or authorization:
 - TLS certificate validation protects the transport channel and authenticates a CA-authorized client certificate.
 - The inner Ed25519 signature is checked against the receiver's explicitly trusted OIX peer card.
 - The recipient identity, expiry, nonce, capability policy, and replay state are checked by the OIX inbox.
-- The TLS certificate must contain exactly one URI SAN of the form `urn:oix:agent:ed25519:<sha256-fingerprint>` matching the OIX sender or expected recipient. The receiver and sender reject certificate/agent-ID mismatches.\n- A valid transport certificate does not automatically add an OIX agent to the trusted-peer store.
+- The TLS certificate must contain exactly one URI SAN of the form `urn:oix:agent:ed25519:<sha256-fingerprint>` matching the OIX sender or expected recipient. The receiver and sender reject certificate/agent-ID mismatches.
+- A valid transport certificate does not automatically add an OIX agent to the trusted-peer store.
 - A valid OIX signature does not authorize task execution. Inbound task requests remain pending operator approval.
 
 ## Receiver setup
@@ -65,7 +66,7 @@ The sender must:
 1. Obtain and verify a signed one-time-prekey bundle for the intended OIX recipient.
 2. Encrypt and persist the exact secure envelope before attempting delivery.
 3. Configure a TLS client context with a client certificate and a CA bundle that validates the receiver's certificate.
-4. Call send_encrypted_envelope() with the expected receiver's OIX signing public key and exact logical message ID.
+4. Call send_encrypted_envelope() for one message or send_encrypted_stream() for a bounded batch, supplying the expected receiver's OIX signing public key and each exact logical message ID.
 5. On timeout or connection loss, retry the exact same persisted encrypted envelope. Do not create a new envelope or reuse the same logical message ID with different content.
 
 The sender first verifies that the TLS server certificate's OIX URI SAN matches the expected recipient. The receiver similarly requires the TLS client certificate's OIX URI SAN to match the encrypted envelope's sender. The sender then accepts success only after the receipt signature, sender/recipient route, logical message ID, and SHA-256 digest of the exact encrypted wrapper all verify. The receiver persists the receipt before sending it, so a retry after a lost response returns the same durable acknowledgement while it remains valid. Expired acknowledgements are re-issued for the same accepted envelope.
@@ -75,8 +76,10 @@ The sender first verifies that the TLS server certificate's OIX URI SAN matches 
 - Four-byte unsigned network-order length prefix.
 - Canonical JSON object only; duplicate JSON keys and non-canonical encodings are rejected.
 - Frame size is bounded by the OIX one-time-prekey envelope limit.
-- One encrypted envelope and one signed receipt per TLS connection.
-- Read/write timeouts and bounded concurrent handler count.
+- Persistent sessions carry up to 100 sequential encrypted envelopes and signed receipts by default; the server can impose a lower per-connection message limit.
+- Each request is acknowledged before the next stream item is sent, applying natural application-level backpressure.
+- Idle sessions close after the configured idle timeout.
+- Read/write timeouts, idle-session timeout, bounded per-connection message count, and bounded concurrent handler count.
 - Server binds to loopback by default; public binding is explicit opt-in.
 - TLS 1.2 minimum; certificate validation is mandatory on both sides.
 
@@ -93,4 +96,4 @@ The sender first verifies that the TLS server certificate's OIX URI SAN matches 
 
 ## Test coverage
 
-The transport test suite covers canonical framing, duplicate-key rejection, malformed and truncated frames, oversized frames, TLS certificate validation, OIX URI SAN identity binding in both directions, rejection of certificate/agent-ID mismatches, loopback-only default binding, encrypted message acceptance, durable signed receipts, and retry behavior after an acknowledgement is lost.
+The transport test suite covers canonical framing, duplicate-key rejection, malformed and truncated frames, oversized frames, TLS certificate validation, OIX URI SAN identity binding in both directions, rejection of certificate/agent-ID mismatches, loopback-only default binding, multi-message persistent sessions, durable signed receipts, and retry behavior after an acknowledgement is lost.

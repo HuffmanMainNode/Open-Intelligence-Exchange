@@ -24,6 +24,7 @@ from oix.transport import (
     encode_frame,
     read_frame,
     send_encrypted_envelope,
+    send_encrypted_stream,
 )
 
 
@@ -343,5 +344,93 @@ def test_client_rejects_tls_server_certificate_bound_to_different_oix_agent(tmp_
             assert prekeys.available_count(now=int(datetime.now(UTC).timestamp())) == 1
         finally:
             await server.close()
+
+    asyncio.run(run())
+
+
+def test_mutual_tls_stream_delivers_multiple_messages_on_one_connection(tmp_path):
+    async def run():
+        sender_dir, receiver_dir = tmp_path / "sender", tmp_path / "receiver"
+        sender_card = generate_identity(sender_dir, "Streaming Sender", ["public.research"])
+        receiver_card = generate_identity(receiver_dir, "Streaming Receiver", ["public.research"])
+        sender_key, receiver_key = load_private_key(sender_dir), load_private_key(receiver_dir)
+        sender_id = sender_card["card"]["agent_id"]
+        receiver_id = receiver_card["card"]["agent_id"]
+        server_tls, client_tls = _tls_contexts(tmp_path, receiver_id, sender_id)
+
+        database = tmp_path / "receiver.sqlite3"
+        inbox = SQLiteInbox(database, receiver_id, CapabilityPolicy({"public.research"}))
+        inbox.trust_peer(sender_card)
+        prekeys = SQLitePreKeyStore(database)
+        bundles = [
+            create_prekey_bundle(prekeys, receiver_key, count=1)
+            for _ in range(3)
+        ]
+        server = OIXMutualTLSServer(
+            inbox,
+            prekeys,
+            receiver_key,
+            idle_timeout_seconds=2,
+            max_messages_per_connection=3,
+        )
+        host, port = await server.start(ssl_context=server_tls)
+        try:
+            messages = [
+                create_message(
+                    sender_key,
+                    receiver_id,
+                    "task.request",
+                    {"task": f"public research item {index}"},
+                    capability="public.research",
+                )
+                for index in range(2)
+            ]
+            encrypted = [
+                encrypt_prekey_envelope(
+                    message, bundles[index], receiver_key.public_key().public_bytes_raw()
+                )
+                for index, message in enumerate(messages)
+            ]
+            receipts = await send_encrypted_stream(
+                encrypted,
+                expected_message_ids=[
+                    message["body"]["message_id"] for message in messages
+                ],
+                host=host,
+                port=port,
+                server_hostname="localhost",
+                ssl_context=client_tls,
+                local_agent_id=sender_id,
+                expected_peer_agent_id=receiver_id,
+                expected_peer_signing_public_key=receiver_key.public_key().public_bytes_raw(),
+            )
+            assert len(receipts) == 2
+            assert all(item["body"]["type"] == "delivery.receipt" for item in receipts)
+            pending = inbox.pending_work()
+            assert len(pending) == 2
+            assert {
+                item["message_id"] for item in pending
+            } == {message["body"]["message_id"] for message in messages}
+            assert prekeys.available_count(now=int(datetime.now(UTC).timestamp())) == 1
+        finally:
+            await server.close()
+
+    asyncio.run(run())
+
+
+def test_stream_rejects_mismatched_message_id_list_before_connecting():
+    async def run():
+        with pytest.raises(ValueError, match="matching items"):
+            await send_encrypted_stream(
+                [{"header": {"sender": "a", "recipient": "b"}}],
+                expected_message_ids=[],
+                host="127.0.0.1",
+                port=1,
+                server_hostname="localhost",
+                ssl_context=ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT),
+                local_agent_id="a",
+                expected_peer_agent_id="b",
+                expected_peer_signing_public_key=b"",
+            )
 
     asyncio.run(run())
