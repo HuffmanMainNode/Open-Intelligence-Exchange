@@ -477,6 +477,7 @@ class SQLitePreKeyStore:
                             prior_receipt["message_id"],
                             envelope_digest,
                             accepted_at=current,
+                            now=current,
                         )
                         db.execute(
                             """UPDATE oix_transport_receipts
@@ -543,6 +544,7 @@ class SQLitePreKeyStore:
                     inner["body"]["message_id"],
                     envelope_digest,
                     accepted_at=current,
+                    now=current,
                 )
                 db.execute(
                     """INSERT INTO oix_transport_receipts(
