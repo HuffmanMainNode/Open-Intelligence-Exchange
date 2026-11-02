@@ -2,9 +2,7 @@ import copy
 
 import pytest
 
-from oix import discovery
-from oix import discovery_exchange
-from oix import identity
+from oix import discovery, discovery_exchange, identity
 
 
 NOW = 1_700_000_000
