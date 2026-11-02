@@ -142,7 +142,7 @@ class SQLitePeerKeyStore:
         with self._connect() as db:
             row = db.execute(
                 "SELECT certificate_json,expires_at FROM peer_encryption_keys "
-                "WHERE agent_id=? AND status IN ('active','superseded')", (agent_id,)
+                "WHERE agent_id=? AND status='active'", (agent_id,)
             ).fetchone()
         if row is None or row["expires_at"] < now:
             return None
