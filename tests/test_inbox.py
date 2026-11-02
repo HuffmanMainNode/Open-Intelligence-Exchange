@@ -133,9 +133,13 @@ def test_evidence_is_review_gated_and_no_payload_is_executed(tmp_path):
     inbox = SQLiteInbox(tmp_path / "inbox.sqlite3", "local-agent",
                         CapabilityPolicy({"evidence.submit"}))
     inbox.trust_peer(sender_card)
-    message = create_message(sender_key, "local-agent", "evidence.submit",
-                             {"source_uri": "https://example.org", "claim": "unverified"},
-                             capability="evidence.submit")
+    message = create_message(
+        sender_key,
+        "local-agent",
+        "evidence.submit",
+        valid_evidence_payload(),
+        capability="evidence.submit",
+    )
     receipt = inbox.receive(message)
     assert receipt.work_status == "pending_review"
     assert inbox.pending_work()[0]["status"] == "pending_review"
@@ -266,3 +270,12 @@ def test_evidence_submit_rejects_malformed_or_unsafe_payload(tmp_path, mutate):
     with pytest.raises(InboxError):
         inbox.receive(message)
     assert inbox.pending_work() == []
+
+
+def test_evidence_payload_validator_rejects_floating_point_summary():
+    from oix.inbox import _validate_evidence_submit_payload
+
+    payload = valid_evidence_payload()
+    payload["summary"]["unsafe_float"] = 1.25
+    with pytest.raises(InboxError, match="deterministic JSON"):
+        _validate_evidence_submit_payload(payload)
