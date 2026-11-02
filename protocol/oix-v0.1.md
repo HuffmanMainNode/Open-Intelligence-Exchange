@@ -59,10 +59,10 @@ Implementations MUST reject unknown protocol versions and message types, malform
 A receiver MUST:
 1. Resolve the sender public key from a locally trusted or explicitly accepted agent card.
 2. Verify the card fingerprint and card signature.
-3. Verify envelope size, version, type, timestamps, sender fingerprint, and message signature.
+3. Verify envelope size, version, type, timestamps, TTL bounds, sender fingerprint, and message signature.
 4. Check that the recipient matches the local agent or an explicitly supported broadcast target.
 5. Reject a repeated `(sender, nonce)` pair until the message expires.
-6. Apply authorization policy independently of signature verification.
+6. Require an explicit requested capability for `task.request` and `evidence.submit`, then apply local authorization independently of signature verification.
 7. Treat payload strings and embedded instructions as untrusted data.
 
 The default `ReplayCache` is bounded and in-memory and is suitable for examples and single-process tests only. The reference library also provides `SQLiteReplayCache`, which stores sender/nonce pairs durably and uses a database uniqueness constraint and transaction for atomic duplicate rejection. The CLI and example receiver currently use the in-memory cache. Multi-host deployments need a transactional shared datastore.
@@ -98,7 +98,7 @@ OIX is designed to map to existing agent and tool ecosystems. MCP provides a too
 
 ## 11. Security considerations
 
-See [THREAT_MODEL.md](../docs/THREAT_MODEL.md) and [SECURITY.md](../SECURITY.md). v0.1 does not provide key revocation distribution, forward secrecy, encrypted payloads, persistent replay protection, or a production transport. Do not treat a signed message as confidential.
+See [THREAT_MODEL.md](../docs/THREAT_MODEL.md) and [SECURITY.md](../SECURITY.md). v0.1 does not provide key revocation distribution, forward secrecy, encrypted payloads, or a production transport. Durable local replay storage is available through `SQLiteReplayCache`, but it does not provide multi-host coordination. Do not treat a signed message as confidential.
 
 
 The Python library exposes `verify_for_recipient(...)` to combine signature/validity checks with an exact local-recipient check. Callers that use `verify_message(...)` directly must check the recipient themselves.
