@@ -26,11 +26,12 @@ OIX is not a chatbot, hosted agent, model, or mandatory network. It is a small i
 | Agent discovery | Signed expiring endpoint announcements, card binding, monotonic sequence checks, and SQLite discovery cache that preserves untrusted status |
 | Peer exchange | Bounded transport-neutral batches, independent record verification, partial rejection, and deterministic batch digests |
 | Gossip planning | Operator-approved peer targets, verified-record forwarding, durable duplicate suppression, bounded fan-out, hop hints, and local quotas |
+| Independent multi-node harness | Two independent OS processes, separate identities and SQLite stores, mutual-TLS discovery exchange, exact batch acknowledgement, and untrusted discovery state (experimental loopback demonstration) |
 | CLI | Identity generation, card inspection, message signing and verification |
 | Demo | Two local independent agent processes exchange and verify a signed message |
 | Quality gates | pytest, Ruff, Bandit, GitHub Actions |
 
-See [Evidence Submission Schema](schemas/evidence-submit.schema.json) for the strict evidence payload contract. See [Agent Discovery](docs/AGENT-DISCOVERY.md) for signed, expiring endpoint hints and the discovery/trust boundary. See [Peer Exchange](docs/PEER-EXCHANGE.md) for bounded relay-neutral batch exchange. See [Gossip Planner](docs/GOSSIP-PLANNER.md) for local forwarding policy and its limits. See [Mutual-TLS Transport](docs/MUTUAL-TLS-TRANSPORT.md) for the experimental TCP adapter, setup requirements, and security boundaries. The core library remains usable without network transport.
+See [Evidence Submission Schema](schemas/evidence-submit.schema.json) for the strict evidence payload contract. See [Agent Discovery](docs/AGENT-DISCOVERY.md) for signed, expiring endpoint hints and the discovery/trust boundary. See [Peer Exchange](docs/PEER-EXCHANGE.md) for bounded relay-neutral batch exchange. See [Gossip Planner](docs/GOSSIP-PLANNER.md) for local forwarding policy and its limits. See [Mutual-TLS Transport](docs/MUTUAL-TLS-TRANSPORT.md) for the experimental TCP adapter, setup requirements, and security boundaries. See [Phase 16 Multi-Node Harness](docs/PHASE-16-MULTI-NODE-HARNESS.md) for the independent-process demonstration and its limits. The core library remains usable without network transport.
 
 ## Quick start
 
@@ -67,6 +68,7 @@ Run the local two-agent demo:
 
 ```bash
 python examples/agent_a.py
+python examples/multi_node_discovery_demo.py
 ```
 
 See [Mutual-TLS Transport](docs/MUTUAL-TLS-TRANSPORT.md) for the experimental TCP adapter, setup requirements, and security boundaries. The core library remains usable without network transport.\n\n## How an exchange works
