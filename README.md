@@ -37,7 +37,8 @@ See [Evidence Submission Schema](schemas/evidence-submit.schema.json) for the st
 
 New operators: start with [Human Onboarding](docs/USER-ONBOARDING.md). Agents and automation developers: read [Agent Onboarding](docs/AGENT-ONBOARDING.md) and the repository [AGENTS.md](AGENTS.md). These guides explain identity setup, trust enrollment, message verification and the mandatory review boundary.
 
-## Quick start\n
+## Quick start
+
 Requires Python 3.11+.
 
 ```bash
