@@ -274,7 +274,6 @@ def test_result_cannot_be_encrypted_to_a_different_peer(tmp_path):
     peer_key, peer_card = _identity(tmp_path, "peer")
     peer_dir = tmp_path / "peer"
     wrong_key, _ = _identity(tmp_path, "wrong-peer")
-    peer_certificate = generate_encryption_key(peer_dir, peer_key)
     database = tmp_path / "shared.sqlite3"
     _result_database(
         database,
