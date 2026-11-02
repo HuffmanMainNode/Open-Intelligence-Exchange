@@ -208,7 +208,7 @@ def test_decrypted_message_enters_normal_durable_oix_inbox(tmp_path):
     from oix.inbox import SQLiteInbox
     from oix.policy import CapabilityPolicy
 
-    sender_dir, sender_key, sender_card = _agent(tmp_path, "sender")
+    _, sender_key, sender_card = _agent(tmp_path, "sender")
     receiver_dir, receiver_key, receiver_card = _agent(tmp_path, "receiver")
     receiver_certificate = generate_encryption_key(receiver_dir, receiver_key)
     receiver_encryption_key = load_encryption_private_key(receiver_dir)
