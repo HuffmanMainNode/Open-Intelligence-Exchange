@@ -1,12 +1,19 @@
 """Signed, content-bound acknowledgements for durable OIX message acceptance."""
 from __future__ import annotations
 
+import hashlib
 import re
 from typing import Any
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from .canonical import canonical_json
 from .envelope import create_message, verify_message
+
+
+def message_digest(envelope: dict[str, Any]) -> str:
+    """Return the SHA-256 digest of the canonical transport envelope."""
+    return hashlib.sha256(canonical_json(envelope)).hexdigest()
 
 
 class DeliveryReceiptError(ValueError):
