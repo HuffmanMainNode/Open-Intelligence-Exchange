@@ -113,7 +113,7 @@ class GossipLedger:
         per_peer_hourly_limit: int,
     ) -> tuple[bool, list[str], dict[str, str]]:
         """Atomically deduplicate a batch and reserve quota for approved targets."""
-        if not re.fullmatch(r"[0-9a-f]{64}", batch_sha256):
+        if not isinstance(batch_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", batch_sha256):
             raise GossipError("batch digest must be a lowercase SHA-256 hex value")
         if not isinstance(now, int) or isinstance(now, bool) or now < 0:
             raise GossipError("now must be a non-negative integer timestamp")
@@ -121,6 +121,8 @@ class GossipLedger:
             raise GossipError("peer identifiers must be supplied as a list")
         if any(not isinstance(peer, str) or not _AGENT_ID.fullmatch(peer) for peer in peer_ids):
             raise GossipError("peer identifiers must be Ed25519 fingerprints")
+        if len(peer_ids) > MAX_GOSSIP_CANDIDATES:
+            raise GossipError("peer candidate list exceeds configured limit")
         unique = sorted(set(peer_ids))
         if (not isinstance(ttl_seconds, int) or isinstance(ttl_seconds, bool)
                 or not 1 <= ttl_seconds <= 86400):
@@ -138,6 +140,14 @@ class GossipLedger:
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             db.execute("DELETE FROM gossip_seen WHERE expires_at<=?", (now,))
+            db.execute(
+                """DELETE FROM gossip_forward_plan
+                   WHERE batch_sha256 NOT IN (SELECT batch_sha256 FROM gossip_seen)"""
+            )
+            db.execute(
+                "DELETE FROM gossip_peer_quota WHERE window_start<?",
+                (window_start - 3600,),
+            )
             seen = db.execute(
                 "SELECT 1 FROM gossip_seen WHERE batch_sha256=?", (batch_sha256,)
             ).fetchone()
