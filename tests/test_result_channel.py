@@ -145,7 +145,8 @@ def test_rejected_result_cannot_be_signed_or_redecided(tmp_path):
 
 def test_delivery_acknowledgement_is_bound_to_persisted_message_id(tmp_path):
     local_key, local_card = _identity(tmp_path, "local")
-    peer_dir, peer_key, peer_card = _identity(tmp_path, "peer")
+    peer_key, peer_card = _identity(tmp_path, "peer")
+    peer_dir = tmp_path / "peer"
     peer_certificate = generate_encryption_key(peer_dir, peer_key)
     database = tmp_path / "shared.sqlite3"
     _result_database(
@@ -270,7 +271,7 @@ def test_result_is_encrypted_for_original_peer_and_persisted_before_delivery(tmp
 def test_result_cannot_be_encrypted_to_a_different_peer(tmp_path):
     local_key, local_card = _identity(tmp_path, "local")
     peer_dir, peer_key, peer_card = _identity(tmp_path, "peer")
-    _, wrong_key, _ = _identity(tmp_path, "wrong-peer")
+    wrong_key, _ = _identity(tmp_path, "wrong-peer")
     peer_certificate = generate_encryption_key(peer_dir, peer_key)
     database = tmp_path / "shared.sqlite3"
     _result_database(
