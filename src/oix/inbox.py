@@ -131,12 +131,9 @@ def _validate_evidence_submit_payload(payload: dict[str, Any]) -> None:
         or isinstance(artifact["size_bytes"], bool)
         or not 0 <= artifact["size_bytes"] <= 1_000_000_000_000
         or not isinstance(artifact.get("media_type"), str)
-        or not re.fullmatch(
-            r"[A-Za-z0-9!#class SQLiteInbox:
-^_.+-]+/[A-Za-z0-9!#class SQLiteInbox:
-^_.+-]+",
-            artifact["media_type"],
-        )
+        or "/" not in artifact["media_type"]
+        or any(char.isspace() for char in artifact["media_type"])
+        or len(artifact["media_type"]) > 128
     ):
         raise InboxError("artifact must contain a SHA-256, bounded size, and media type")
 
