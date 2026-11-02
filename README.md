@@ -19,7 +19,7 @@ OIX is not a chatbot, hosted agent, model, or mandatory network. It is a small i
 | One-time prekeys | Signed X25519 prekey bundles, ephemeral sender keys, and atomic single-use decryption with local private-key consumption |
 | Peer key lifecycle | Local SQLite registry with explicit rotation approval, monotonic certificate timestamps, revocation, and audit history |
 | Delivery receipts | Signed delivery.receipt messages bound to the exact encrypted-envelope digest and logical message ID |
-| Experimental network transport | Bounded length-prefixed frames over mutual TLS, certificate URI SAN bound to OIX agent fingerprints, encrypted one-time-prekey envelopes, durable signed acknowledgements |
+| Experimental network transport | Bounded persistent mutual-TLS sessions, certificate URI SAN bound to OIX agent fingerprints, encrypted one-time-prekey envelopes, durable signed acknowledgements with per-message backpressure |
 | Replay defense | Bounded in-memory cache, durable SQLite replay cache, and trusted-peer inbox replay controls |
 | Authorization | Explicit capability allow-list and approval-gated durable inbound work queue |
 | Evidence records | Provenance fields, content hashes, evidence status |
