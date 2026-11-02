@@ -1,8 +1,7 @@
-import copy
-
 import pytest
 
 from oix.discovery import create_announcement
+from oix.discovery_exchange import create_exchange_batch
 from oix.gossip import (
     GossipError,
     GossipLedger,
@@ -10,7 +9,6 @@ from oix.gossip import (
     plan_gossip_forwarding,
 )
 from oix.identity import generate_identity, load_card, load_private_key
-from oix.discovery_exchange import create_exchange_batch
 
 
 NOW = 1_700_000_000
