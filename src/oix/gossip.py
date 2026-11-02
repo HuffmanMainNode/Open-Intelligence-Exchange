@@ -250,11 +250,9 @@ def plan_gossip_forwarding(
         raise GossipError("inbound peer identifier is malformed")
     if not isinstance(operator_approved_peer_ids, list):
         raise GossipError("operator-approved peers must be supplied as a list")
-    verified_records = []
     for index, item in enumerate(records):
         if not verify_announcement(item["announcement"], item["card"], now=now):
             raise GossipError(f"discovery record {index} failed signature or expiry verification")
-        verified_records.append(item)
     if not verified_records:
         raise GossipError("no verified records available for forwarding")
     # Preserve the original batch identifier and digest across relay hops.
