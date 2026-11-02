@@ -24,7 +24,7 @@ def _agent(tmp_path, name):
 
 
 def _secure_pair(tmp_path, *, cert_now=None, ttl_seconds=3600):
-    sender_dir, sender_key, sender_card = _agent(tmp_path, "sender")
+    _, sender_key, sender_card = _agent(tmp_path, "sender")
     receiver_dir, receiver_key, receiver_card = _agent(tmp_path, "receiver")
     certificate = generate_encryption_key(
         receiver_dir, receiver_key, now=cert_now, ttl_seconds=ttl_seconds
@@ -111,7 +111,7 @@ def test_envelope_rejects_wrong_recipient_and_wrong_sender_key(tmp_path):
         sender_key, _, receiver_key, receiver_card,
         receiver_encryption_key, certificate,
     ) = _secure_pair(tmp_path)
-    other_dir, other_key, other_card = _agent(tmp_path, "other")
+    _, other_key, other_card = _agent(tmp_path, "other")
     receiver_id = receiver_card["card"]["agent_id"]
     message = create_message(sender_key, receiver_id, "agent.hello", {})
     encrypted = encrypt_envelope(
