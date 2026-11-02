@@ -362,7 +362,10 @@ def test_mutual_tls_stream_delivers_multiple_messages_on_one_connection(tmp_path
         inbox = SQLiteInbox(database, receiver_id, CapabilityPolicy({"public.research"}))
         inbox.trust_peer(sender_card)
         prekeys = SQLitePreKeyStore(database)
-        bundle = create_prekey_bundle(prekeys, receiver_key, count=3)
+        bundles = [
+            create_prekey_bundle(prekeys, receiver_key, count=1)
+            for _ in range(3)
+        ]
         server = OIXMutualTLSServer(
             inbox,
             prekeys,
@@ -384,9 +387,9 @@ def test_mutual_tls_stream_delivers_multiple_messages_on_one_connection(tmp_path
             ]
             encrypted = [
                 encrypt_prekey_envelope(
-                    message, bundle, receiver_key.public_key().public_bytes_raw()
+                    message, bundles[index], receiver_key.public_key().public_bytes_raw()
                 )
-                for message in messages
+                for index, message in enumerate(messages)
             ]
             receipts = await send_encrypted_stream(
                 encrypted,
