@@ -410,7 +410,7 @@ class SQLiteResultPublisher:
             rows = db.execute(
                 """
                 SELECT task_id,sender,request_message_id,signed_message_id,
-                       secure_envelope_json,secure_key_fingerprint,created_at
+                       secure_envelope_json,secure_key_fingerprint,secure_mode,created_at
                 FROM oix_result_outbox
                 WHERE status='signed' AND secure_envelope_json IS NOT NULL
                 ORDER BY created_at,task_id LIMIT ?
@@ -427,6 +427,7 @@ class SQLiteResultPublisher:
                     row["secure_envelope_json"],
                     row["sender"],
                     row["secure_key_fingerprint"],
+                    mode=row["secure_mode"],
                 ),
                 "created_at": row["created_at"],
             }
@@ -472,7 +473,7 @@ class SQLiteResultPublisher:
             row = db.execute(
                 """
                 SELECT sender,status,signed_message_id,secure_envelope_json,
-                       secure_key_fingerprint,receipt_message_id
+                       secure_key_fingerprint,secure_mode,receipt_message_id
                 FROM oix_result_outbox WHERE task_id=?
                 """,
                 (task_id,),
@@ -484,7 +485,8 @@ class SQLiteResultPublisher:
             if not row["secure_envelope_json"]:
                 raise ResultChannelError("result must be encrypted before delivery")
             secure = self._decode_persisted_secure_envelope(
-                row["secure_envelope_json"], row["sender"], row["secure_key_fingerprint"]
+                row["secure_envelope_json"], row["sender"], row["secure_key_fingerprint"],
+                mode=row["secure_mode"],
             )
             digest = message_digest(secure)
             if not verify_delivery_receipt(
