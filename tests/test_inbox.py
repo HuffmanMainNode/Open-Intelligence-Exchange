@@ -272,9 +272,9 @@ def test_evidence_submit_rejects_malformed_or_unsafe_payload(tmp_path, mutate):
 
 
 def test_evidence_payload_validator_rejects_floating_point_summary():
-    from oix.inbox import _validate_evidence_submit_payload
+    from oix.inbox import validate_evidence_submit_payload
 
     payload = valid_evidence_payload()
     payload["summary"]["unsafe_float"] = 1.25
     with pytest.raises(InboxError, match="deterministic JSON"):
-        _validate_evidence_submit_payload(payload)
+        validate_evidence_submit_payload(payload)
