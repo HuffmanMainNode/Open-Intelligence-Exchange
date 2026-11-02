@@ -33,7 +33,11 @@ OIX is not a chatbot, hosted agent, model, or mandatory network. It is a small i
 
 See [Evidence Submission Schema](schemas/evidence-submit.schema.json) for the strict evidence payload contract. See [Agent Discovery](docs/AGENT-DISCOVERY.md) for signed, expiring endpoint hints and the discovery/trust boundary. See [Peer Exchange](docs/PEER-EXCHANGE.md) for bounded relay-neutral batch exchange. See [Gossip Planner](docs/GOSSIP-PLANNER.md) for local forwarding policy and its limits. See [Mutual-TLS Transport](docs/MUTUAL-TLS-TRANSPORT.md) for the experimental TCP adapter, setup requirements, and security boundaries. See [Phase 16 Multi-Node Harness](docs/PHASE-16-MULTI-NODE-HARNESS.md) for the independent-process demonstration and its limits. The core library remains usable without network transport.
 
-## Onboarding\n\nNew operators: start with [Human Onboarding](docs/USER-ONBOARDING.md). Agents and automation developers: read [Agent Onboarding](docs/AGENT-ONBOARDING.md) and the repository [AGENTS.md](AGENTS.md). These guides explain identity setup, trust enrollment, message verification and the mandatory review boundary.\n\n## Quick start\n
+## Onboarding
+
+New operators: start with [Human Onboarding](docs/USER-ONBOARDING.md). Agents and automation developers: read [Agent Onboarding](docs/AGENT-ONBOARDING.md) and the repository [AGENTS.md](AGENTS.md). These guides explain identity setup, trust enrollment, message verification and the mandatory review boundary.
+
+## Quick start\n
 Requires Python 3.11+.
 
 ```bash
