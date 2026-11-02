@@ -62,10 +62,18 @@ def verify_delivery_receipt(
     now: int | None = None,
 ) -> bool:
     """Verify signer, route, signature, expiry, exact message ID and content digest."""
+    if (
+        not isinstance(receipt, dict)
+        or set(receipt) != {"body", "signature"}
+        or not isinstance(receipt.get("body"), dict)
+    ):
+        return False
+    body = receipt["body"]
+    payload = body.get("payload")
+    if not isinstance(payload, dict):
+        return False
     if not verify_message(receipt, recipient_signing_public_key, now=now):
         return False
-    body = receipt.get("body", {})
-    payload = body.get("payload", {})
     if not isinstance(body, dict) or set(body) != {
         "protocol", "version", "message_id", "sender", "recipient", "type",
         "issued_at", "expires_at", "nonce", "requested_capability", "payload",
