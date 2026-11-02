@@ -32,9 +32,9 @@ def test_rotation_requires_approval_and_monotonic_certificate_time(tmp_path):
     store.install(first, public, now=1100)
     with pytest.raises(PeerKeyError, match="explicit operator approval"):
         store.install(second, public, now=2100)
+    store.install(second, public, approve_rotation=True, now=2100)
     with pytest.raises(PeerKeyError, match="newer"):
         store.install(first, public, approve_rotation=True, now=2100)
-    store.install(second, public, approve_rotation=True, now=2100)
     assert store.active(card["card"]["agent_id"], now=2100) == second
     events = [event["event"] for event in store.history(card["card"]["agent_id"])]
     assert events == ["installed", "rotated"]
