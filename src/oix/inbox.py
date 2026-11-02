@@ -98,12 +98,18 @@ def _validate_evidence_submit_payload(payload: dict[str, Any]) -> None:
     if source_uri is not None:
         if not isinstance(source_uri, str) or len(source_uri) > 2048:
             raise InboxError("source_uri must be null or a bounded HTTPS URL")
-        parsed = urlsplit(source_uri)
+        try:
+            parsed = urlsplit(source_uri)
+            hostname = parsed.hostname
+            parsed.port
+        except ValueError as exc:
+            raise InboxError("source_uri is malformed") from exc
         if (
             parsed.scheme != "https"
-            or not parsed.hostname
+            or not hostname
             or parsed.username is not None
             or parsed.password is not None
+            or any(char.isspace() for char in source_uri)
         ):
             raise InboxError("source_uri must be an HTTPS URL without embedded credentials")
     _validate_rfc3339(payload.get("source_timestamp"), "source_timestamp", nullable=True)
@@ -115,9 +121,9 @@ def _validate_evidence_submit_payload(payload: dict[str, Any]) -> None:
             not isinstance(value, dict)
             or set(value) != {"name", "version"}
             or not isinstance(value.get("name"), str)
-            or not 1 <= len(value["name"]) <= 128
+            or not 1 <= len(value["name"].strip()) <= 128
             or not isinstance(value.get("version"), str)
-            or not 1 <= len(value["version"]) <= 32
+            or not 1 <= len(value["version"].strip()) <= 32
         ):
             raise InboxError(f"{field} must contain bounded name and version fields")
 
