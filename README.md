@@ -15,6 +15,7 @@ OIX is not a chatbot, hosted agent, model, or mandatory network. It is a small i
 | Deterministic message encoding | Restricted canonical JSON; rejects floats and non-JSON values |
 | Agent identity | Ed25519 keypair, public-key fingerprint, signed agent card |
 | Message integrity | Ed25519 signatures over canonical message-body bytes |
+| Confidentiality wrapper | Optional X25519 + HKDF-SHA256 + ChaCha20-Poly1305 secure envelope, bound to a trusted Ed25519 identity |
 | Replay defense | Bounded in-memory cache, durable SQLite replay cache, and trusted-peer inbox replay controls |
 | Authorization | Explicit capability allow-list and approval-gated durable inbound work queue |
 | Evidence records | Provenance fields, content hashes, evidence status |
@@ -37,7 +38,7 @@ ruff check .
 bandit -q -r src
 ```
 
-Private-key note: `private.key` is stored unencrypted and is created with owner-only POSIX mode `0600`; the containing directory is created with mode `0700` when newly created. Windows does not enforce POSIX mode bits. Protect the directory, do not sync it to public storage, and use encrypted disk or a secret manager for sensitive deployments. Key encryption and rotation workflows are not implemented yet.
+Private-key note: `private.key` and optional `encryption.key` are stored unencrypted and are created with owner-only POSIX mode `0600`; identity directories use mode `0700`. Windows does not enforce POSIX mode bits. Protect the directory, do not sync it to public storage, and use encrypted disk or a secret manager for sensitive deployments. Automated key encryption, rotation, and revocation workflows are not implemented.
 
 Create an identity:
 
@@ -85,15 +86,16 @@ The runnable demonstration launches the receiver as a separate Python process an
 
 - `protocol/oix-v0.1.md`: protocol contract and security requirements
 - `protocol/schemas/`: JSON Schema contracts
-- `src/oix/`: runnable Python implementation, including `SQLiteInbox` for explicit peer trust, durable receive, approval-gated work, and `SQLiteResultPublisher` for approved signed results
+- `src/oix/`: runnable Python implementation, including `SQLiteInbox`, `SQLiteResultPublisher`, and optional authenticated encryption in `secure_transport.py`
 - `examples/`: independent-agent demonstration
 - `tests/`: protocol and security regression tests
 - `docs/THREAT_MODEL.md`: risks, controls, known limits
 - `docs/INTEROPERABILITY.md`: relationship to MCP and A2A
+- `docs/SECURE-ENVELOPES.md`: encrypted message wrapper, certificate handling, and threat boundaries
 
 ## Maturity and limitations
 
-OIX v0.1 is experimental. It is not a security certification, production agent platform, or claim of full MCP/A2A conformance. The canonical JSON rules are a restricted deterministic subset, not a complete RFC 8785 implementation. The CLI and two-process example use the in-memory cache for demonstration only. The library also provides `SQLiteReplayCache` for durable, atomic replay protection across restarts on a shared local database. See [DURABLE-REPLAY.md](docs/DURABLE-REPLAY.md). Network transport, encrypted payloads, distributed replay coordination, key rotation/revocation infrastructure, and production key custody remain future work. `SQLiteInbox` is a local receive primitive: it requires explicit trusted-card enrollment, persists task/evidence messages for operator approval/review, and never dispatches or executes payloads. The optional `SQLiteResultPublisher` stages OIX-originated Open-Swarm results for explicit operator approval, signs and persists the exact `task.result` envelope, and exposes it to a future transport without sending it. It requires the shared SQLite result-outbox schema initialized by the Open-Swarm OIX handoff adapter. See [TRANSACTIONAL-INBOX.md](docs/TRANSACTIONAL-INBOX.md) and [SIGNED-RESULT-CHANNEL.md](docs/SIGNED-RESULT-CHANNEL.md).
+OIX v0.1 is experimental. It is not a security certification, production agent platform, or claim of full MCP/A2A conformance. The canonical JSON rules are a restricted deterministic subset, not a complete RFC 8785 implementation. The CLI and two-process example use the in-memory cache for demonstration only. The library also provides `SQLiteReplayCache` for durable, atomic replay protection across restarts on a shared local database. See [DURABLE-REPLAY.md](docs/DURABLE-REPLAY.md). Live network transport, distributed replay coordination, automated key rotation/revocation, forward secrecy, and production key custody remain future work. The optional `secure_transport.py` wrapper encrypts signed OIX messages with X25519, HKDF-SHA256, and ChaCha20-Poly1305, but it does not open sockets or integrate automatically with `SQLiteInbox`; callers decrypt first, then pass the inner message to the inbox. The current static recipient encryption key does not provide forward secrecy against later compromise. `SQLiteInbox` is a local receive primitive: it requires explicit trusted-card enrollment, persists task/evidence messages for operator approval/review, and never dispatches or executes payloads. The optional `SQLiteResultPublisher` stages OIX-originated Open-Swarm results for explicit operator approval, signs and persists the exact `task.result` envelope, and can encrypt and persist a wrapper addressed to the original peer's certified X25519 key before exposing it through `pending_secure_delivery()`. It never sends the message. It requires the shared SQLite result-outbox schema initialized by the Open-Swarm OIX handoff adapter. See [TRANSACTIONAL-INBOX.md](docs/TRANSACTIONAL-INBOX.md), [SIGNED-RESULT-CHANNEL.md](docs/SIGNED-RESULT-CHANNEL.md), and [SECURE-ENVELOPES.md](docs/SECURE-ENVELOPES.md).
 
 Use the protocol specification as the contract. Report ambiguity, interoperability problems, and security issues through the repository. See [SECURITY.md](SECURITY.md).
 
