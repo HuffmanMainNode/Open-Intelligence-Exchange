@@ -20,13 +20,14 @@ from oix.transport import (
     MAX_FRAME_BYTES,
     OIXMutualTLSServer,
     TransportError,
+    agent_identity_uri,
     encode_frame,
     read_frame,
     send_encrypted_envelope,
 )
 
 
-def _certificates(tmp_path):
+def _certificates(tmp_path, server_agent_id, client_agent_id):
     now = datetime.now(UTC)
     ca_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "OIX Test CA")])
@@ -59,7 +60,7 @@ def _certificates(tmp_path):
     ca_path = tmp_path / "ca.pem"
     ca_path.write_bytes(ca_cert.public_bytes(serialization.Encoding.PEM))
 
-    def leaf(name, usage, server=False):
+    def leaf(name, usage, agent_id, server=False):
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, name)])
         builder = (
@@ -79,14 +80,16 @@ def _certificates(tmp_path):
             )
             .add_extension(x509.ExtendedKeyUsage([usage]), critical=False)
         )
+        san_names = [x509.UniformResourceIdentifier(agent_identity_uri(agent_id))]
         if server:
-            builder = builder.add_extension(
-                x509.SubjectAlternativeName([
-                    x509.DNSName("localhost"),
-                    x509.IPAddress(ipaddress.ip_address("127.0.0.1")),
-                ]),
-                critical=False,
-            )
+            san_names.extend([
+                x509.DNSName("localhost"),
+                x509.IPAddress(ipaddress.ip_address("127.0.0.1")),
+            ])
+        builder = builder.add_extension(
+            x509.SubjectAlternativeName(san_names),
+            critical=False,
+        )
         cert = builder.sign(ca_key, hashes.SHA256())
         cert_path = tmp_path / f"{name}.pem"
         key_path = tmp_path / f"{name}.key"
@@ -98,13 +101,19 @@ def _certificates(tmp_path):
         ))
         return cert_path, key_path
 
-    server_cert, server_key = leaf("localhost", ExtendedKeyUsageOID.SERVER_AUTH, server=True)
-    client_cert, client_key = leaf("oix-test-client", ExtendedKeyUsageOID.CLIENT_AUTH)
+    server_cert, server_key = leaf(
+        "localhost", ExtendedKeyUsageOID.SERVER_AUTH, server_agent_id, server=True
+    )
+    client_cert, client_key = leaf(
+        "oix-test-client", ExtendedKeyUsageOID.CLIENT_AUTH, client_agent_id
+    )
     return ca_path, server_cert, server_key, client_cert, client_key
 
 
-def _tls_contexts(tmp_path):
-    ca, server_cert, server_key, client_cert, client_key = _certificates(tmp_path)
+def _tls_contexts(tmp_path, server_agent_id, client_agent_id):
+    ca, server_cert, server_key, client_cert, client_key = _certificates(
+        tmp_path, server_agent_id, client_agent_id
+    )
     server = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     server.load_cert_chain(server_cert, server_key)
     server.load_verify_locations(cafile=str(ca))
@@ -162,7 +171,6 @@ def test_frame_codec_rejects_oversized_and_truncated_frames():
 
 def test_mutual_tls_transport_accepts_and_acknowledges_once(tmp_path):
     async def run():
-        server_tls, client_tls = _tls_contexts(tmp_path)
         sender_dir, receiver_dir = tmp_path / "sender", tmp_path / "receiver"
         sender_card = generate_identity(sender_dir, "Sender", ["public.research"])
         receiver_card = generate_identity(receiver_dir, "Receiver", ["public.research"])
@@ -170,6 +178,7 @@ def test_mutual_tls_transport_accepts_and_acknowledges_once(tmp_path):
         receiver_key = load_private_key(receiver_dir)
         sender_id = sender_card["card"]["agent_id"]
         receiver_id = receiver_card["card"]["agent_id"]
+        server_tls, client_tls = _tls_contexts(tmp_path, receiver_id, sender_id)
 
         database = tmp_path / "receiver.sqlite3"
         inbox = SQLiteInbox(
@@ -220,7 +229,9 @@ def test_mutual_tls_transport_accepts_and_acknowledges_once(tmp_path):
 
 def test_server_requires_mutual_tls_and_loopback_default(tmp_path):
     async def run():
-        _, _client_tls = _tls_contexts(tmp_path)
+        dummy_server = "ed25519:" + "1" * 64
+        dummy_client = "ed25519:" + "2" * 64
+        _, _client_tls = _tls_contexts(tmp_path, dummy_server, dummy_client)
         no_client_auth = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         with pytest.raises(ValueError, match="trusted client certificate"):
             from oix.transport import _require_server_tls
@@ -230,5 +241,107 @@ def test_server_requires_mutual_tls_and_loopback_default(tmp_path):
             invalid_client = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
             invalid_client.check_hostname = False
             _require_client_tls(invalid_client)
+
+    asyncio.run(run())
+
+
+def test_server_rejects_client_certificate_bound_to_different_oix_agent(tmp_path):
+    async def run():
+        sender_dir, receiver_dir = tmp_path / "sender", tmp_path / "receiver"
+        sender_card = generate_identity(sender_dir, "Sender", ["public.research"])
+        receiver_card = generate_identity(receiver_dir, "Receiver", ["public.research"])
+        sender_key, receiver_key = load_private_key(sender_dir), load_private_key(receiver_dir)
+        sender_id = sender_card["card"]["agent_id"]
+        receiver_id = receiver_card["card"]["agent_id"]
+        wrong_client_id = "ed25519:" + "0" * 64
+        if wrong_client_id == sender_id:
+            wrong_client_id = "ed25519:" + "f" * 64
+        server_tls, wrong_client_tls = _tls_contexts(
+            tmp_path, receiver_id, wrong_client_id
+        )
+        database = tmp_path / "receiver.sqlite3"
+        inbox = SQLiteInbox(database, receiver_id, CapabilityPolicy({"public.research"}))
+        inbox.trust_peer(sender_card)
+        prekeys = SQLitePreKeyStore(database)
+        bundle = create_prekey_bundle(prekeys, receiver_key, count=1)
+        server = OIXMutualTLSServer(inbox, prekeys, receiver_key)
+        host, port = await server.start(ssl_context=server_tls)
+        try:
+            message = create_message(
+                sender_key,
+                receiver_id,
+                "task.request",
+                {"task": "must not be accepted"},
+                capability="public.research",
+            )
+            encrypted = encrypt_prekey_envelope(
+                message, bundle, receiver_key.public_key().public_bytes_raw()
+            )
+            with pytest.raises(TransportError, match="truncated"):
+                await send_encrypted_envelope(
+                    encrypted,
+                    host=host,
+                    port=port,
+                    server_hostname="localhost",
+                    ssl_context=wrong_client_tls,
+                    local_agent_id=sender_id,
+                    expected_peer_agent_id=receiver_id,
+                    expected_message_id=message["body"]["message_id"],
+                    expected_peer_signing_public_key=receiver_key.public_key().public_bytes_raw(),
+                )
+            assert inbox.pending_work() == []
+            assert prekeys.available_count(now=int(datetime.now(UTC).timestamp())) == 1
+        finally:
+            await server.close()
+
+    asyncio.run(run())
+
+
+def test_client_rejects_tls_server_certificate_bound_to_different_oix_agent(tmp_path):
+    async def run():
+        sender_dir, receiver_dir = tmp_path / "sender", tmp_path / "receiver"
+        sender_card = generate_identity(sender_dir, "Sender", ["public.research"])
+        receiver_card = generate_identity(receiver_dir, "Receiver", ["public.research"])
+        sender_key, receiver_key = load_private_key(sender_dir), load_private_key(receiver_dir)
+        sender_id = sender_card["card"]["agent_id"]
+        receiver_id = receiver_card["card"]["agent_id"]
+        wrong_server_id = "ed25519:" + "0" * 64
+        if wrong_server_id == receiver_id:
+            wrong_server_id = "ed25519:" + "f" * 64
+        server_tls, client_tls = _tls_contexts(tmp_path, wrong_server_id, sender_id)
+        database = tmp_path / "receiver.sqlite3"
+        inbox = SQLiteInbox(database, receiver_id, CapabilityPolicy({"public.research"}))
+        inbox.trust_peer(sender_card)
+        prekeys = SQLitePreKeyStore(database)
+        bundle = create_prekey_bundle(prekeys, receiver_key, count=1)
+        server = OIXMutualTLSServer(inbox, prekeys, receiver_key)
+        host, port = await server.start(ssl_context=server_tls)
+        try:
+            message = create_message(
+                sender_key,
+                receiver_id,
+                "task.request",
+                {"task": "must not be sent"},
+                capability="public.research",
+            )
+            encrypted = encrypt_prekey_envelope(
+                message, bundle, receiver_key.public_key().public_bytes_raw()
+            )
+            with pytest.raises(TransportError, match="TLS server certificate identity"):
+                await send_encrypted_envelope(
+                    encrypted,
+                    host=host,
+                    port=port,
+                    server_hostname="localhost",
+                    ssl_context=client_tls,
+                    local_agent_id=sender_id,
+                    expected_peer_agent_id=receiver_id,
+                    expected_message_id=message["body"]["message_id"],
+                    expected_peer_signing_public_key=receiver_key.public_key().public_bytes_raw(),
+                )
+            assert inbox.pending_work() == []
+            assert prekeys.available_count(now=int(datetime.now(UTC).timestamp())) == 1
+        finally:
+            await server.close()
 
     asyncio.run(run())

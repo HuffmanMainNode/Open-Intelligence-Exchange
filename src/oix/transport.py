@@ -11,11 +11,13 @@ import asyncio
 import ipaddress
 import json
 import logging
+import re
 import ssl
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
+from cryptography import x509
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from .canonical import canonical_json
@@ -32,6 +34,41 @@ logger = logging.getLogger(__name__)
 
 class TransportError(RuntimeError):
     """A transport frame or authenticated peer exchange failed."""
+
+
+_AGENT_ID_PATTERN = re.compile(r"^ed25519:[0-9a-f]{64}$")
+_AGENT_URI_PREFIX = "urn:oix:agent:"
+
+
+def agent_identity_uri(agent_id: str) -> str:
+    """Return the X.509 URI SAN required to bind a TLS certificate to an OIX agent."""
+    if not isinstance(agent_id, str) or not _AGENT_ID_PATTERN.fullmatch(agent_id):
+        raise ValueError("agent_id must be a canonical OIX Ed25519 fingerprint")
+    return _AGENT_URI_PREFIX + agent_id
+
+
+def _certificate_agent_id(ssl_object: Any) -> str:
+    """Extract exactly one OIX agent identity from a verified TLS peer certificate."""
+    if ssl_object is None:
+        raise TransportError("TLS peer certificate is unavailable")
+    certificate_der = ssl_object.getpeercert(binary_form=True)
+    if not certificate_der:
+        raise TransportError("TLS peer certificate is unavailable")
+    try:
+        certificate = x509.load_der_x509_certificate(certificate_der)
+        san = certificate.extensions.get_extension_for_class(
+            x509.SubjectAlternativeName
+        ).value
+    except (ValueError, x509.ExtensionNotFound) as exc:
+        raise TransportError("TLS peer certificate has no valid subject alternative name") from exc
+    identities = [
+        value.removeprefix(_AGENT_URI_PREFIX)
+        for value in san.get_values_for_type(x509.UniformResourceIdentifier)
+        if value.startswith(_AGENT_URI_PREFIX)
+    ]
+    if len(identities) != 1 or not _AGENT_ID_PATTERN.fullmatch(identities[0]):
+        raise TransportError("TLS peer certificate must contain exactly one canonical OIX agent URI")
+    return identities[0]
 
 
 def encode_frame(value: dict[str, Any]) -> bytes:
@@ -192,6 +229,9 @@ class OIXMutualTLSServer:
             if not isinstance(header, dict) or not isinstance(header.get("sender"), str):
                 raise TransportError("encrypted envelope has no sender identity")
             sender_id = header["sender"]
+            tls_peer = writer.get_extra_info("ssl_object")
+            if _certificate_agent_id(tls_peer) != sender_id:
+                raise TransportError("TLS client certificate identity does not match OIX sender")
             sender_public_key = self.inbox.trusted_peer_public_key(sender_id)
             _, receipt = await asyncio.to_thread(
                 self.prekey_store.consume_and_acknowledge,
@@ -266,6 +306,9 @@ async def send_encrypted_envelope(
             ),
             timeout_seconds,
         )
+        tls_peer = writer.get_extra_info("ssl_object")
+        if _certificate_agent_id(tls_peer) != expected_peer_agent_id:
+            raise TransportError("TLS server certificate identity does not match expected OIX peer")
         await write_frame(writer, secure_envelope, timeout_seconds=timeout_seconds)
         receipt = await read_frame(reader, timeout_seconds=timeout_seconds)
         if not verify_delivery_receipt(
