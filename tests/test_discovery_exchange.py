@@ -2,10 +2,7 @@ import copy
 
 import pytest
 
-from oix.discovery import (
-    SQLiteDiscoveryStore,
-    create_announcement,
-)
+from oix.discovery import SQLiteDiscoveryStore, create_announcement
 from oix.discovery_exchange import (
     MAX_EXCHANGE_BYTES,
     ExchangeError,
