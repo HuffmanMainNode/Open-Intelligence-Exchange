@@ -466,10 +466,17 @@ class SQLitePreKeyStore:
                     except (TypeError, ValueError) as exc:
                         raise PreKeyError("stored transport receipt is malformed") from exc
                     receipt_body = receipt.get("body") if isinstance(receipt, dict) else None
-                    receipt_expiry = (
-                        receipt_body.get("expires_at", 0)
-                        if isinstance(receipt_body, dict) else 0
-                    )
+                    if not isinstance(receipt_body, dict) or not verify_delivery_receipt(
+                        receipt,
+                        receipt_signing_private_key.public_key().public_bytes_raw(),
+                        expected_recipient_agent_id=local_agent_id,
+                        expected_sender_agent_id=header["sender"],
+                        expected_message_id=prior_receipt["message_id"],
+                        expected_content_digest=envelope_digest,
+                        now=receipt_body.get("issued_at"),
+                    ):
+                        raise PreKeyError("stored transport receipt failed signature or binding checks")
+                    receipt_expiry = receipt_body.get("expires_at", 0)
                     if receipt_expiry < current:
                         receipt = create_delivery_receipt(
                             receipt_signing_private_key,
