@@ -137,8 +137,9 @@ def test_recipient_certificate_must_be_signed_by_trusted_agent_key(tmp_path):
         _, certificate,
     ) = _secure_pair(tmp_path)
     changed = json.loads(json.dumps(certificate))
-    changed["body"]["public_key"] = changed["body"]["public_key"][:-1] + (
-        "A" if changed["body"]["public_key"][-1] != "A" else "B"
+    changed["body"]["public_key"] = (
+        ("A" if changed["body"]["public_key"][0] != "A" else "B")
+        + changed["body"]["public_key"][1:]
     )
     assert not verify_encryption_certificate(
         changed, receiver_key.public_key().public_bytes_raw()
@@ -202,3 +203,42 @@ def test_encryption_certificate_rejects_expired_and_invalid_ttl(tmp_path):
     )
     with pytest.raises(ValueError, match="ttl_seconds"):
         generate_encryption_key(directory / "second", signing_key, ttl_seconds=0)
+
+def test_decrypted_message_enters_normal_durable_oix_inbox(tmp_path):
+    from oix.inbox import SQLiteInbox
+    from oix.policy import CapabilityPolicy
+
+    sender_dir, sender_key, sender_card = _agent(tmp_path, "sender")
+    receiver_dir, receiver_key, receiver_card = _agent(tmp_path, "receiver")
+    receiver_certificate = generate_encryption_key(receiver_dir, receiver_key)
+    receiver_encryption_key = load_encryption_private_key(receiver_dir)
+    receiver_id = receiver_card["card"]["agent_id"]
+    database = tmp_path / "inbox.sqlite3"
+    inbox = SQLiteInbox(
+        database, receiver_id, CapabilityPolicy({"public.research"})
+    )
+    inbox.trust_peer(sender_card)
+    signed = create_message(
+        sender_key,
+        receiver_id,
+        "task.request",
+        {"task": "summarize public advisories"},
+        capability="public.research",
+    )
+    encrypted = encrypt_envelope(
+        signed,
+        receiver_certificate,
+        receiver_key.public_key().public_bytes_raw(),
+    )
+    decrypted = decrypt_envelope(
+        encrypted,
+        receiver_encryption_key,
+        receiver_certificate,
+        receiver_key.public_key().public_bytes_raw(),
+        sender_key.public_key().public_bytes_raw(),
+        receiver_id,
+    )
+    receipt = inbox.receive(decrypted)
+    assert receipt.message_type == "task.request"
+    assert receipt.work_status == "pending_approval"
+    assert inbox.pending_work()[0]["payload"]["task"] == "summarize public advisories"
