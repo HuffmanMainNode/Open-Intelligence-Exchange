@@ -11,7 +11,6 @@ import asyncio
 import ipaddress
 import json
 import ssl
-import time
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
