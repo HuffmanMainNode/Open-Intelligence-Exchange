@@ -15,8 +15,8 @@ OIX is not a chatbot, hosted agent, model, or mandatory network. It is a small i
 | Deterministic message encoding | Restricted canonical JSON; rejects floats and non-JSON values |
 | Agent identity | Ed25519 keypair, public-key fingerprint, signed agent card |
 | Message integrity | Ed25519 signatures over canonical message-body bytes |
-| Replay defense | Bounded in-memory nonce cache plus optional durable SQLite replay cache |
-| Authorization | Explicit capability allow-list |
+| Replay defense | Bounded in-memory cache, durable SQLite replay cache, and trusted-peer inbox replay controls |
+| Authorization | Explicit capability allow-list and approval-gated durable inbound work queue |
 | Evidence records | Provenance fields, content hashes, evidence status |
 | CLI | Identity generation, card inspection, message signing and verification |
 | Demo | Two local independent agent processes exchange and verify a signed message |
@@ -85,7 +85,7 @@ The runnable demonstration launches the receiver as a separate Python process an
 
 - `protocol/oix-v0.1.md`: protocol contract and security requirements
 - `protocol/schemas/`: JSON Schema contracts
-- `src/oix/`: runnable Python implementation
+- `src/oix/`: runnable Python implementation, including `SQLiteInbox` for explicit peer trust, durable receive, and approval-gated work
 - `examples/`: independent-agent demonstration
 - `tests/`: protocol and security regression tests
 - `docs/THREAT_MODEL.md`: risks, controls, known limits
@@ -93,7 +93,7 @@ The runnable demonstration launches the receiver as a separate Python process an
 
 ## Maturity and limitations
 
-OIX v0.1 is experimental. It is not a security certification, production agent platform, or claim of full MCP/A2A conformance. The canonical JSON rules are a restricted deterministic subset, not a complete RFC 8785 implementation. The CLI and two-process example use the in-memory cache for demonstration only. The library also provides `SQLiteReplayCache` for durable, atomic replay protection across restarts on a shared local database. See [DURABLE-REPLAY.md](docs/DURABLE-REPLAY.md). Network transport, key rotation/revocation infrastructure, and production key custody remain future work.
+OIX v0.1 is experimental. It is not a security certification, production agent platform, or claim of full MCP/A2A conformance. The canonical JSON rules are a restricted deterministic subset, not a complete RFC 8785 implementation. The CLI and two-process example use the in-memory cache for demonstration only. The library also provides `SQLiteReplayCache` for durable, atomic replay protection across restarts on a shared local database. See [DURABLE-REPLAY.md](docs/DURABLE-REPLAY.md). Network transport, encrypted payloads, distributed replay coordination, key rotation/revocation infrastructure, and production key custody remain future work. `SQLiteInbox` is a local receive primitive: it requires explicit trusted-card enrollment, persists task/evidence messages for operator approval/review, and never dispatches or executes payloads. See [TRANSACTIONAL-INBOX.md](docs/TRANSACTIONAL-INBOX.md).
 
 Use the protocol specification as the contract. Report ambiguity, interoperability problems, and security issues through the repository. See [SECURITY.md](SECURITY.md).
 
