@@ -120,14 +120,14 @@ class SQLitePeerKeyStore:
             db.execute("BEGIN IMMEDIATE")
             rows = db.execute(
                 "SELECT key_fingerprint FROM peer_encryption_keys "
-                "WHERE agent_id=? AND status='active'", (agent_id,)
+                "WHERE agent_id=? AND status IN ('active','superseded')", (agent_id,)
             ).fetchall()
             if not rows:
                 db.commit()
                 return False
             db.execute(
                 "UPDATE peer_encryption_keys SET status='revoked' "
-                "WHERE agent_id=? AND status='active'", (agent_id,)
+                "WHERE agent_id=? AND status IN ('active','superseded')", (agent_id,)
             )
             for row in rows:
                 db.execute(
@@ -142,7 +142,7 @@ class SQLitePeerKeyStore:
         with self._connect() as db:
             row = db.execute(
                 "SELECT certificate_json,expires_at FROM peer_encryption_keys "
-                "WHERE agent_id=? AND status='active'", (agent_id,)
+                "WHERE agent_id=? AND status IN ('active','superseded')", (agent_id,)
             ).fetchone()
         if row is None or row["expires_at"] < now:
             return None
