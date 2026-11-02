@@ -6,8 +6,8 @@ For multi-host deployments, use a transactional shared database service.
 from __future__ import annotations
 
 import sqlite3
-from contextlib import closing
 import time
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
