@@ -59,7 +59,8 @@
             "task.progress",
             "task.result",
             "evidence.submit",
-            "error"
+            "error",
+            "delivery.receipt"
           ]
         },
         "issued_at": {
