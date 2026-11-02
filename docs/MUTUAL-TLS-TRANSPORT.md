@@ -10,12 +10,12 @@ The transport does not replace OIX identity or authorization:
 - TLS certificate validation protects the transport channel and authenticates a CA-authorized client certificate.
 - The inner Ed25519 signature is checked against the receiver's explicitly trusted OIX peer card.
 - The recipient identity, expiry, nonce, capability policy, and replay state are checked by the OIX inbox.
-- A valid transport certificate does not automatically add an OIX agent to the trusted-peer store.
+- The TLS certificate must contain exactly one URI SAN of the form `urn:oix:agent:ed25519:<sha256-fingerprint>` matching the OIX sender or expected recipient. The receiver and sender reject certificate/agent-ID mismatches.\n- A valid transport certificate does not automatically add an OIX agent to the trusted-peer store.
 - A valid OIX signature does not authorize task execution. Inbound task requests remain pending operator approval.
 
 ## Receiver setup
 
-Create an OIX identity and configure a TLS server certificate with a DNS or IP subject alternative name matching the hostname clients will use. Configure a CA trust bundle containing the CA that issues authorized client certificates.
+Create an OIX identity and configure a TLS server certificate with a DNS or IP subject alternative name matching the hostname clients will use. Configure a CA trust bundle containing the CA that issues authorized client certificates. The issuing CA must validate the signed OIX agent card and proof of possession before issuing a certificate whose URI SAN contains that agent's exact OIX fingerprint.
 
 Example:
 
@@ -68,7 +68,7 @@ The sender must:
 4. Call send_encrypted_envelope() with the expected receiver's OIX signing public key and exact logical message ID.
 5. On timeout or connection loss, retry the exact same persisted encrypted envelope. Do not create a new envelope or reuse the same logical message ID with different content.
 
-The sender accepts success only after the receipt signature, sender/recipient route, logical message ID, and SHA-256 digest of the exact encrypted wrapper all verify. The receiver persists the receipt before sending it, so a retry after a lost response returns the same durable acknowledgement while it remains valid. Expired acknowledgements are re-issued for the same accepted envelope.
+The sender first verifies that the TLS server certificate's OIX URI SAN matches the expected recipient. The receiver similarly requires the TLS client certificate's OIX URI SAN to match the encrypted envelope's sender. The sender then accepts success only after the receipt signature, sender/recipient route, logical message ID, and SHA-256 digest of the exact encrypted wrapper all verify. The receiver persists the receipt before sending it, so a retry after a lost response returns the same durable acknowledgement while it remains valid. Expired acknowledgements are re-issued for the same accepted envelope.
 
 ## Framing and limits
 
@@ -83,7 +83,7 @@ The sender accepts success only after the receipt signature, sender/recipient ro
 ## Security limitations
 
 - No discovery, rendezvous, relay service, NAT traversal, dynamic endpoint registry, or automatic prekey replenishment.
-- No TLS certificate-to-OIX-agent-card binding or automated certificate revocation feed. The CA trust configuration and OIX trusted-peer registry are separate operator-managed controls.
+- The transport binds the TLS certificate's URI SAN to the OIX agent fingerprint, but it does not independently verify the CA's enrollment process or prove that the certificate public key is cryptographically derived from the Ed25519 OIX key. CA enrollment must verify the signed agent card and proof of possession. No automated certificate revocation feed is implemented.
 - No rate-limit persistence, IP reputation, DDoS protection, distributed queue, or high-availability failover.
 - No encrypted-at-rest SQLite database. Private key storage and database backups remain operator responsibilities.
 - A successful TLS handshake authenticates a certificate chain, not the truth of submitted intelligence.
@@ -93,4 +93,4 @@ The sender accepts success only after the receipt signature, sender/recipient ro
 
 ## Test coverage
 
-The transport test suite covers canonical framing, duplicate-key rejection, malformed and truncated frames, oversized frames, TLS certificate validation, loopback-only default binding, encrypted message acceptance, durable signed receipts, and retry behavior after an acknowledgement is lost.
+The transport test suite covers canonical framing, duplicate-key rejection, malformed and truncated frames, oversized frames, TLS certificate validation, OIX URI SAN identity binding in both directions, rejection of certificate/agent-ID mismatches, loopback-only default binding, encrypted message acceptance, durable signed receipts, and retry behavior after an acknowledgement is lost.
