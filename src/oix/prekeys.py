@@ -286,6 +286,7 @@ class SQLitePreKeyStore:
         db = sqlite3.connect(self.database, timeout=5)
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA busy_timeout=5000")
+        db.execute("PRAGMA foreign_keys=ON")
         db.execute("PRAGMA secure_delete=ON")
         return db
 
