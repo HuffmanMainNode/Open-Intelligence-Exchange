@@ -2,12 +2,18 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from pathlib import Path
 from typing import Any
 
 from .canonical import canonical_json
-from .secure_transport import encryption_key_fingerprint, verify_encryption_certificate
+from .identity import fingerprint
+from .secure_transport import (
+    encrypt_envelope,
+    encryption_key_fingerprint,
+    verify_encryption_certificate,
+)
 
 
 class PeerKeyError(ValueError):
@@ -23,6 +29,19 @@ class SQLitePeerKeyStore:
 
     def __init__(self, database: str | Path) -> None:
         self.database = str(database)
+        path = Path(self.database)
+        if path.parent.is_symlink() or path.is_symlink():
+            raise ValueError("peer key database path must not traverse a symlink")
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if os.name == "posix":
+            try:
+                descriptor = os.open(
+                    self.database, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600
+                )
+            except FileExistsError:
+                os.chmod(path, 0o600)
+            else:
+                os.close(descriptor)
         with self._connect() as db:
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS peer_encryption_keys (
@@ -147,6 +166,25 @@ class SQLitePeerKeyStore:
         if row is None or row["expires_at"] < now:
             return None
         return json.loads(row["certificate_json"])
+
+    def encrypt_for_peer(
+        self,
+        envelope: dict[str, Any],
+        trusted_signing_public_key: bytes,
+        *,
+        now: int,
+    ) -> dict[str, Any]:
+        """Encrypt only to the currently installed, non-expired peer key."""
+        body = envelope.get("body", {}) if isinstance(envelope, dict) else {}
+        recipient = body.get("recipient")
+        if not isinstance(recipient, str) or recipient != fingerprint(trusted_signing_public_key):
+            raise PeerKeyError("message recipient does not match trusted peer identity")
+        certificate = self.active(recipient, now=now)
+        if certificate is None:
+            raise PeerKeyError("peer has no active, non-expired encryption certificate")
+        return encrypt_envelope(
+            envelope, certificate, trusted_signing_public_key, now=now
+        )
 
     def history(self, agent_id: str) -> list[dict[str, Any]]:
         with self._connect() as db:
