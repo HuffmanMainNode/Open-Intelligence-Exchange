@@ -3,7 +3,12 @@ import json
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from oix.discovery import DiscoveryError, SQLiteDiscoveryStore, create_announcement, verify_announcement
+from oix.discovery import (
+    DiscoveryError,
+    SQLiteDiscoveryStore,
+    create_announcement,
+    verify_announcement,
+)
 from oix.identity import generate_identity, load_card, load_private_key
 
 
@@ -30,7 +35,7 @@ def test_signed_announcement_binds_identity_card_and_capabilities(tmp_path):
 
 
 def test_announcement_rejects_wrong_private_key(tmp_path):
-    key, card = make_peer(tmp_path)
+    _key, card = make_peer(tmp_path)
     with pytest.raises(DiscoveryError, match="does not match"):
         announcement(Ed25519PrivateKey.generate(), card)
 
