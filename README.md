@@ -85,7 +85,7 @@ The runnable demonstration launches the receiver as a separate Python process an
 
 - `protocol/oix-v0.1.md`: protocol contract and security requirements
 - `protocol/schemas/`: JSON Schema contracts
-- `src/oix/`: runnable Python implementation, including `SQLiteInbox` for explicit peer trust, durable receive, and approval-gated work
+- `src/oix/`: runnable Python implementation, including `SQLiteInbox` for explicit peer trust, durable receive, approval-gated work, and `SQLiteResultPublisher` for approved signed results
 - `examples/`: independent-agent demonstration
 - `tests/`: protocol and security regression tests
 - `docs/THREAT_MODEL.md`: risks, controls, known limits
@@ -93,7 +93,7 @@ The runnable demonstration launches the receiver as a separate Python process an
 
 ## Maturity and limitations
 
-OIX v0.1 is experimental. It is not a security certification, production agent platform, or claim of full MCP/A2A conformance. The canonical JSON rules are a restricted deterministic subset, not a complete RFC 8785 implementation. The CLI and two-process example use the in-memory cache for demonstration only. The library also provides `SQLiteReplayCache` for durable, atomic replay protection across restarts on a shared local database. See [DURABLE-REPLAY.md](docs/DURABLE-REPLAY.md). Network transport, encrypted payloads, distributed replay coordination, key rotation/revocation infrastructure, and production key custody remain future work. `SQLiteInbox` is a local receive primitive: it requires explicit trusted-card enrollment, persists task/evidence messages for operator approval/review, and never dispatches or executes payloads. See [TRANSACTIONAL-INBOX.md](docs/TRANSACTIONAL-INBOX.md).
+OIX v0.1 is experimental. It is not a security certification, production agent platform, or claim of full MCP/A2A conformance. The canonical JSON rules are a restricted deterministic subset, not a complete RFC 8785 implementation. The CLI and two-process example use the in-memory cache for demonstration only. The library also provides `SQLiteReplayCache` for durable, atomic replay protection across restarts on a shared local database. See [DURABLE-REPLAY.md](docs/DURABLE-REPLAY.md). Network transport, encrypted payloads, distributed replay coordination, key rotation/revocation infrastructure, and production key custody remain future work. `SQLiteInbox` is a local receive primitive: it requires explicit trusted-card enrollment, persists task/evidence messages for operator approval/review, and never dispatches or executes payloads. The optional `SQLiteResultPublisher` stages OIX-originated Open-Swarm results for explicit operator approval, signs and persists the exact `task.result` envelope, and exposes it to a future transport without sending it. It requires the shared SQLite result-outbox schema initialized by the Open-Swarm OIX handoff adapter. See [TRANSACTIONAL-INBOX.md](docs/TRANSACTIONAL-INBOX.md) and [SIGNED-RESULT-CHANNEL.md](docs/SIGNED-RESULT-CHANNEL.md).
 
 Use the protocol specification as the contract. Report ambiguity, interoperability problems, and security issues through the repository. See [SECURITY.md](SECURITY.md).
 
