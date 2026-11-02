@@ -6,7 +6,7 @@ import base64
 import json
 import sys
 
-from oix.envelope import verify_message
+from oix.envelope import verify_for_recipient
 from oix.handshake import negotiate
 from oix.identity import load_card, verify_card
 from oix.policy import CapabilityPolicy
@@ -28,17 +28,15 @@ def main() -> None:
         sender["card"]["public_key"] + "=" * (-len(sender["card"]["public_key"]) % 4)
     )
     body = envelope.get("body", {})
-    if not verify_message(envelope, sender_public):
-        raise SystemExit("invalid message signature or validity window")
     if body.get("sender") != sender["card"]["agent_id"]:
         raise SystemExit("sender identity mismatch")
-    if body.get("recipient") != own["card"]["agent_id"]:
-        raise SystemExit("message addressed to another agent")
+    if not verify_for_recipient(envelope, sender_public, own["card"]["agent_id"]):
+        raise SystemExit("invalid message signature, validity window, or recipient")
     agreement = negotiate(["0.1"], sender, set())
     if not agreement["accepted"]:
         raise SystemExit("protocol negotiation failed")
     policy = CapabilityPolicy(set(own["card"]["capabilities"]))
-    if not policy.permits(body.get("requested_capability")):
+    if not policy.permits(body.get("requested_capability"), message_type=body.get("type")):
         raise SystemExit("requested capability denied")
     replay = ReplayCache()
     if not replay.accept(body):
