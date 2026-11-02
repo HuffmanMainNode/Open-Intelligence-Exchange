@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -8,6 +9,8 @@ import pytest
 
 from oix.envelope import create_message
 from oix.identity import generate_identity, load_private_key
+from oix.inbox import SQLiteInbox
+from oix.policy import CapabilityPolicy
 from oix.prekeys import (
     PreKeyError,
     SQLitePreKeyStore,
@@ -176,3 +179,92 @@ def test_prekey_database_is_owner_only_on_posix(tmp_path):
     mode = stat.S_IMODE((tmp_path / "private-prekeys.sqlite3").stat().st_mode)
     assert mode == 0o600
     assert store.available_count(now=int(time.time())) == 0
+
+def test_prekey_consumption_and_inbox_acceptance_commit_atomically(tmp_path):
+    sender_key, _sender_id, sender_card = _agent(tmp_path, "sender")
+    recipient_key, recipient_id, _ = _agent(tmp_path, "recipient")
+    database = tmp_path / "shared.sqlite3"
+    inbox = SQLiteInbox(
+        database, recipient_id, CapabilityPolicy({"public.research"})
+    )
+    inbox.trust_peer(sender_card)
+    store = SQLitePreKeyStore(database)
+    now = int(time.time())
+    bundle = create_prekey_bundle(store, recipient_key, count=2, now=now)
+    message = create_message(
+        sender_key,
+        recipient_id,
+        "task.request",
+        {"task": "review public advisory"},
+        capability="public.research",
+    )
+    encrypted = encrypt_prekey_envelope(
+        message, bundle, recipient_key.public_key().public_bytes_raw(), now=now
+    )
+    opened, receipt = store.consume_and_receive(
+        encrypted,
+        inbox,
+        recipient_key.public_key().public_bytes_raw(),
+        sender_key.public_key().public_bytes_raw(),
+        recipient_id,
+        now=now,
+    )
+    assert opened == message
+    assert receipt.duplicate is True
+    assert inbox.pending_work()[0]["status"] == "pending_approval"
+    assert store.available_count(now=now) == 1
+
+
+def test_inbox_failure_rolls_back_prekey_consumption(tmp_path):
+    sender_key, _, sender_card = _agent(tmp_path, "sender")
+    recipient_key, recipient_id, _ = _agent(tmp_path, "recipient")
+    database = tmp_path / "shared.sqlite3"
+    inbox = SQLiteInbox(
+        database, recipient_id, CapabilityPolicy({"public.research"})
+    )
+    inbox.trust_peer(sender_card)
+    store = SQLitePreKeyStore(database)
+    now = int(time.time())
+    bundle = create_prekey_bundle(store, recipient_key, count=1, now=now)
+    message = create_message(
+        sender_key,
+        recipient_id,
+        "task.request",
+        {"task": "review public advisory"},
+        capability="public.research",
+    )
+    encrypted = encrypt_prekey_envelope(
+        message, bundle, recipient_key.public_key().public_bytes_raw(), now=now
+    )
+    with sqlite3.connect(database) as db:
+        db.execute(
+            """CREATE TRIGGER reject_atomic_work BEFORE INSERT ON inbound_work
+               BEGIN SELECT RAISE(ABORT, 'simulated inbox failure'); END"""
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="simulated inbox failure"):
+        store.consume_and_receive(
+            encrypted,
+            inbox,
+            recipient_key.public_key().public_bytes_raw(),
+            sender_key.public_key().public_bytes_raw(),
+            recipient_id,
+            now=now,
+        )
+    assert store.available_count(now=now) == 1
+    with sqlite3.connect(database) as db:
+        assert db.execute("SELECT COUNT(*) FROM inbox_messages").fetchone()[0] == 0
+
+
+def test_atomic_prekey_acceptance_requires_one_shared_database(tmp_path):
+    sender_key, _, _ = _agent(tmp_path, "sender")
+    recipient_key, recipient_id, _ = _agent(tmp_path, "recipient")
+    inbox = SQLiteInbox(tmp_path / "inbox.sqlite3", recipient_id)
+    store = SQLitePreKeyStore(tmp_path / "prekeys.sqlite3")
+    with pytest.raises(PreKeyError, match="same SQLite database"):
+        store.consume_and_decrypt(
+            {},
+            recipient_key.public_key().public_bytes_raw(),
+            sender_key.public_key().public_bytes_raw(),
+            recipient_id,
+            inbox=inbox,
+        )

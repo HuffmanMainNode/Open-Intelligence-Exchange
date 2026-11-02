@@ -286,6 +286,7 @@ class SQLitePreKeyStore:
         db = sqlite3.connect(self.database, timeout=5)
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA busy_timeout=5000")
+        db.execute("PRAGMA foreign_keys=ON")
         db.execute("PRAGMA secure_delete=ON")
         return db
 
@@ -322,9 +323,12 @@ class SQLitePreKeyStore:
         local_agent_id: str,
         *,
         now: int | None = None,
+        inbox: Any | None = None,
     ) -> dict[str, Any]:
-        """Atomically decrypt and consume a prekey exactly once after validation."""
+        """Atomically decrypt, optionally accept into a shared-database inbox, and consume."""
         current = int(time.time()) if now is None else now
+        if inbox is not None and Path(inbox.database).resolve() != Path(self.database).resolve():
+            raise PreKeyError("prekey store and inbox must share the same SQLite database")
         if not isinstance(secure_envelope, dict) or set(secure_envelope) != {"header", "ciphertext"}:
             raise PreKeyError("encrypted envelope has an invalid shape")
         if len(canonical_json(secure_envelope)) > MAX_PREKEY_ENVELOPE_BYTES:
@@ -396,9 +400,34 @@ class SQLitePreKeyStore:
                 )
             ):
                 raise PreKeyError("inner OIX signature, sender, or recipient validation failed")
+            if inbox is not None:
+                inbox.receive(inner, now=current, connection=db)
             db.execute(
                 "DELETE FROM one_time_prekeys WHERE key_id=? AND status='available'",
                 (header["prekey_id"],),
             )
             db.commit()
             return inner
+
+    def consume_and_receive(
+        self,
+        secure_envelope: dict[str, Any],
+        inbox: Any,
+        recipient_signing_public_key: bytes,
+        sender_signing_public_key: bytes,
+        local_agent_id: str,
+        *,
+        now: int | None = None,
+    ) -> tuple[dict[str, Any], Any]:
+        """Atomically consume the prekey and accept the message into the same SQLite inbox."""
+        inner = self.consume_and_decrypt(
+            secure_envelope,
+            recipient_signing_public_key,
+            sender_signing_public_key,
+            local_agent_id,
+            now=now,
+            inbox=inbox,
+        )
+        # This second read returns the durable inbox receipt (normally duplicate=True).
+        receipt = inbox.receive(inner, now=now)
+        return inner, receipt

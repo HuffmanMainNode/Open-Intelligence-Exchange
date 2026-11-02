@@ -174,3 +174,8 @@ The one-time-prekey path avoids reusing a static recipient X25519 private key fo
 Prekey bundles are signed and time-bounded, but this phase does not provide an online prekey directory, automatic replenishment, remote prekey reservation, or network transport. Bundle distribution must occur over an authenticated channel. A bundle may be replayed, but each corresponding private key can be consumed only once locally. Operators should publish replenishment bundles before the available pool runs low.
 
 The existing static-recipient secure-envelope API remains available for compatibility. Callers must explicitly choose the one-time-prekey API to obtain these properties.
+
+
+### Atomic prekey and inbox acceptance
+
+When an application requires reliable acceptance, initialize `SQLitePreKeyStore` and `SQLiteInbox` against the same SQLite database file and use `consume_and_receive()`. The prekey is deleted only after the same SQLite transaction has passed inbox trust, signature, recipient, capability-policy, replay, and durable-insert checks. If any inbox operation fails, both the inbox writes and prekey deletion roll back. Separate database files cannot provide this atomicity.
