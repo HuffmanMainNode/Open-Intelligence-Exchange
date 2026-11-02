@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import ssl
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from cryptography import x509
@@ -27,7 +27,7 @@ from oix.transport import (
 
 
 def _certificates(tmp_path):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     ca_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "OIX Test CA")])
     ca_cert = (
@@ -211,7 +211,7 @@ def test_mutual_tls_transport_accepts_and_acknowledges_once(tmp_path):
             assert first == second
             assert first["body"]["type"] == "delivery.receipt"
             assert inbox.pending_work()[0]["status"] == "pending_approval"
-            assert prekeys.available_count(now=int(datetime.now(timezone.utc).timestamp())) == 1
+            assert prekeys.available_count(now=int(datetime.now(UTC).timestamp())) == 1
         finally:
             await server.close()
 
@@ -220,7 +220,7 @@ def test_mutual_tls_transport_accepts_and_acknowledges_once(tmp_path):
 
 def test_server_requires_mutual_tls_and_loopback_default(tmp_path):
     async def run():
-        _, client_tls = _tls_contexts(tmp_path)
+        _, _client_tls = _tls_contexts(tmp_path)
         no_client_auth = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         with pytest.raises(ValueError, match="trusted client certificate"):
             from oix.transport import _require_server_tls
