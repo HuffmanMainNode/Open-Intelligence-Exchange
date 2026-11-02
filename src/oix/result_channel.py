@@ -297,6 +297,65 @@ class SQLiteResultPublisher:
             )
             return secure
 
+    def encrypt_approved_with_prekey(
+        self,
+        task_id: str,
+        recipient_bundle: dict[str, Any],
+        recipient_signing_public_key: bytes,
+        *,
+        key_id: str | None = None,
+        now: int | None = None,
+    ) -> dict[str, Any]:
+        """Persist a result encrypted to one certified, single-use peer prekey."""
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                """
+                SELECT sender,status,signed_envelope_json,signed_message_id,
+                       secure_envelope_json,secure_key_fingerprint,secure_mode
+                FROM oix_result_outbox WHERE task_id=?
+                """,
+                (task_id,),
+            ).fetchone()
+            if row is None:
+                raise ResultChannelError("result does not exist")
+            if row["status"] != "signed":
+                raise ResultChannelError("result must be signed before encryption")
+            if (
+                fingerprint(recipient_signing_public_key) != row["sender"]
+                or not verify_prekey_bundle(
+                    recipient_bundle, recipient_signing_public_key, now=now
+                )
+                or recipient_bundle["body"]["agent_id"] != row["sender"]
+            ):
+                raise ResultChannelError(
+                    "recipient prekey bundle does not match the original trusted peer"
+                )
+            signed = self._decode_persisted_envelope(row)
+            secure = encrypt_prekey_envelope(
+                signed, recipient_bundle, recipient_signing_public_key,
+                key_id=key_id, now=now,
+            )
+            prekey_fingerprint = secure["header"]["prekey_fingerprint"]
+            encoded = json.dumps(
+                secure, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            )
+            if len(encoded.encode("utf-8")) > MAX_SECURE_ENVELOPE_BYTES:
+                raise ResultChannelError("encrypted result exceeds the secure envelope limit")
+            db.execute(
+                """
+                UPDATE oix_result_outbox
+                SET secure_envelope_json=?,secure_key_fingerprint=?,secure_created_at=?,
+                    secure_mode='one_time_prekey'
+                WHERE task_id=? AND status='signed' AND signed_message_id=?
+                """,
+                (
+                    encoded, prekey_fingerprint, datetime.now(UTC).isoformat(),
+                    task_id, row["signed_message_id"],
+                ),
+            )
+            return secure
+
     def _decode_persisted_secure_envelope(
         self, encoded: str, recipient: str, key_fingerprint: str
     ) -> dict[str, Any]:
