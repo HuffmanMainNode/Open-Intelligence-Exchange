@@ -91,6 +91,7 @@ The runnable demonstration launches the receiver as a separate Python process an
 - `tests/`: protocol and security regression tests
 - `docs/THREAT_MODEL.md`: risks, controls, known limits
 - `docs/INTEROPERABILITY.md`: relationship to MCP and A2A
+- `docs/SECURE-ENVELOPES.md`: encrypted message wrapper, certificate handling, and threat boundaries
 
 ## Maturity and limitations
 
