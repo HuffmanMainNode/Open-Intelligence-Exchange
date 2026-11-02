@@ -21,7 +21,7 @@ class ReplayCache:
         key = (body["sender"], body["nonce"])
         if key in self._seen or body["expires_at"] < current:
             return False
+        if len(self._seen) >= self.max_entries:
+            return False
         self._seen[key] = body["expires_at"]
-        while len(self._seen) > self.max_entries:
-            self._seen.popitem(last=False)
         return True
