@@ -6,6 +6,11 @@ import pytest
 from oix.envelope import verify_message
 from oix.identity import generate_identity, load_private_key
 from oix.inbox import SQLiteInbox
+from oix.secure_transport import (
+    decrypt_envelope,
+    generate_encryption_key,
+    load_encryption_private_key,
+)
 from oix.result_channel import (
     ResultChannelError,
     ResultSchemaError,
@@ -140,7 +145,8 @@ def test_rejected_result_cannot_be_signed_or_redecided(tmp_path):
 
 def test_delivery_acknowledgement_is_bound_to_persisted_message_id(tmp_path):
     local_key, local_card = _identity(tmp_path, "local")
-    _, peer_card = _identity(tmp_path, "peer")
+    peer_dir, peer_key, peer_card = _identity(tmp_path, "peer")
+    peer_certificate = generate_encryption_key(peer_dir, peer_key)
     database = tmp_path / "shared.sqlite3"
     _result_database(
         database,
@@ -153,6 +159,11 @@ def test_delivery_acknowledgement_is_bound_to_persisted_message_id(tmp_path):
     publisher.decide("task-123", approve=True)
     envelope = publisher.sign_approved("task-123")
     message_id = envelope["body"]["message_id"]
+    with pytest.raises(ResultChannelError, match="must be encrypted"):
+        publisher.mark_delivered("task-123", message_id)
+    publisher.encrypt_approved(
+        "task-123", peer_certificate, peer_key.public_key().public_bytes_raw()
+    )
     with pytest.raises(ResultChannelError, match="message ID mismatch"):
         publisher.mark_delivered("task-123", "wrong-id")
     assert publisher.mark_delivered("task-123", message_id) is True
@@ -203,3 +214,82 @@ def test_persisted_envelope_tampering_is_detected_before_reuse_or_delivery(tmp_p
         publisher.sign_approved("task-123")
     with pytest.raises(ResultChannelError, match="integrity checks"):
         publisher.pending_delivery()
+
+def test_result_is_encrypted_for_original_peer_and_persisted_before_delivery(tmp_path):
+    local_key, local_card = _identity(tmp_path, "local")
+    peer_dir, peer_key, peer_card = _identity(tmp_path, "peer")
+    peer_certificate = generate_encryption_key(peer_dir, peer_key)
+    peer_encryption_key = load_encryption_private_key(peer_dir)
+    peer_id = peer_card["card"]["agent_id"]
+    database = tmp_path / "shared.sqlite3"
+    _result_database(
+        database,
+        sender=local_card["card"]["agent_id"],
+        peer=peer_id,
+    )
+    publisher = SQLiteResultPublisher(
+        database, local_card["card"]["agent_id"], local_key
+    )
+    publisher.decide("task-123", approve=True)
+    signed = publisher.sign_approved("task-123")
+
+    secure = publisher.encrypt_approved(
+        "task-123",
+        peer_certificate,
+        peer_key.public_key().public_bytes_raw(),
+    )
+    assert secure == publisher.encrypt_approved(
+        "task-123",
+        peer_certificate,
+        peer_key.public_key().public_bytes_raw(),
+    )
+    assert "A public-source summary." not in json.dumps(secure)
+    queued = publisher.pending_secure_delivery()
+    assert len(queued) == 1
+    assert queued[0]["envelope"] == secure
+    decrypted = decrypt_envelope(
+        secure,
+        peer_encryption_key,
+        peer_certificate,
+        peer_key.public_key().public_bytes_raw(),
+        local_key.public_key().public_bytes_raw(),
+        peer_id,
+    )
+    assert decrypted == signed
+    assert decrypted["body"]["payload"]["result"] == "A public-source summary."
+    with sqlite3.connect(database) as db:
+        row = db.execute(
+            "SELECT secure_envelope_json,secure_key_fingerprint,status "
+            "FROM oix_result_outbox WHERE task_id='task-123'"
+        ).fetchone()
+    assert json.loads(row[0]) == secure
+    assert len(row[1]) == 64
+    assert row[2] == "signed"
+
+
+def test_result_cannot_be_encrypted_to_a_different_peer(tmp_path):
+    local_key, local_card = _identity(tmp_path, "local")
+    peer_dir, peer_key, peer_card = _identity(tmp_path, "peer")
+    _, wrong_key, wrong_card = _identity(tmp_path, "wrong-peer")
+    peer_certificate = generate_encryption_key(peer_dir, peer_key)
+    database = tmp_path / "shared.sqlite3"
+    _result_database(
+        database,
+        sender=local_card["card"]["agent_id"],
+        peer=peer_card["card"]["agent_id"],
+    )
+    publisher = SQLiteResultPublisher(
+        database, local_card["card"]["agent_id"], local_key
+    )
+    publisher.decide("task-123", approve=True)
+    publisher.sign_approved("task-123")
+    wrong_certificate = generate_encryption_key(
+        tmp_path / "wrong-peer-encryption", wrong_key
+    )
+    with pytest.raises(ResultChannelError, match="original trusted peer"):
+        publisher.encrypt_approved(
+            "task-123",
+            wrong_certificate,
+            wrong_key.public_key().public_bytes_raw(),
+        )
+    assert publisher.pending_secure_delivery() == []
