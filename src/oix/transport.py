@@ -21,7 +21,7 @@ from .canonical import canonical_json
 from .identity import fingerprint
 from .inbox import SQLiteInbox
 from .prekeys import MAX_PREKEY_ENVELOPE_BYTES, SQLitePreKeyStore
-from .receipts import verify_delivery_receipt
+from .receipts import message_digest, verify_delivery_receipt
 
 MAX_FRAME_BYTES = MAX_PREKEY_ENVELOPE_BYTES
 FRAME_HEADER_BYTES = 4
