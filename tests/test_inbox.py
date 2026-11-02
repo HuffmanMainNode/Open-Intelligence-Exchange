@@ -150,3 +150,38 @@ def test_card_tampering_is_not_trusted(tmp_path):
     changed["card"]["capabilities"].append("filesystem.write")
     with pytest.raises(InboxError):
         inbox.trust_peer(changed)
+
+
+def test_concurrent_duplicate_delivery_creates_one_work_item(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    sender_key, sender_card = make_agent(tmp_path, "sender", ["public.research"])
+    inbox = SQLiteInbox(tmp_path / "inbox.sqlite3", "local-agent",
+                        CapabilityPolicy({"public.research"}))
+    inbox.trust_peer(sender_card)
+    message = create_message(sender_key, "local-agent", "task.request", {"task": "inspect"},
+                             capability="public.research")
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        receipts = list(executor.map(lambda _: inbox.receive(message), range(8)))
+    assert sum(not receipt.duplicate for receipt in receipts) == 1
+    assert len({receipt.work_id for receipt in receipts}) == 1
+    assert len(inbox.pending_work()) == 1
+
+
+def test_inbox_and_work_creation_roll_back_together(tmp_path):
+    sender_key, sender_card = make_agent(tmp_path, "sender", ["public.research"])
+    database = tmp_path / "inbox.sqlite3"
+    inbox = SQLiteInbox(database, "local-agent", CapabilityPolicy({"public.research"}))
+    inbox.trust_peer(sender_card)
+    with sqlite3.connect(database) as db:
+        db.execute(
+            """CREATE TRIGGER reject_inbound_work BEFORE INSERT ON inbound_work
+               BEGIN SELECT RAISE(ABORT, 'simulated work-store failure'); END"""
+        )
+    message = create_message(sender_key, "local-agent", "task.request", {"task": "inspect"},
+                             capability="public.research")
+    with pytest.raises(sqlite3.IntegrityError):
+        inbox.receive(message)
+    with sqlite3.connect(database) as db:
+        assert db.execute("SELECT COUNT(*) FROM inbox_messages").fetchone()[0] == 0
+        assert db.execute("SELECT COUNT(*) FROM inbound_work").fetchone()[0] == 0
