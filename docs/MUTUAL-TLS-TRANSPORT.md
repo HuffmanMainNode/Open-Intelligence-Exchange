@@ -10,7 +10,8 @@ The transport does not replace OIX identity or authorization:
 - TLS certificate validation protects the transport channel and authenticates a CA-authorized client certificate.
 - The inner Ed25519 signature is checked against the receiver's explicitly trusted OIX peer card.
 - The recipient identity, expiry, nonce, capability policy, and replay state are checked by the OIX inbox.
-- The TLS certificate must contain exactly one URI SAN of the form `urn:oix:agent:ed25519:<sha256-fingerprint>` matching the OIX sender or expected recipient. The receiver and sender reject certificate/agent-ID mismatches.\n- A valid transport certificate does not automatically add an OIX agent to the trusted-peer store.
+- The TLS certificate must contain exactly one URI SAN of the form `urn:oix:agent:ed25519:<sha256-fingerprint>` matching the OIX sender or expected recipient. The receiver and sender reject certificate/agent-ID mismatches.
+- A valid transport certificate does not automatically add an OIX agent to the trusted-peer store.
 - A valid OIX signature does not authorize task execution. Inbound task requests remain pending operator approval.
 
 ## Receiver setup
@@ -75,7 +76,9 @@ The sender first verifies that the TLS server certificate's OIX URI SAN matches 
 - Four-byte unsigned network-order length prefix.
 - Canonical JSON object only; duplicate JSON keys and non-canonical encodings are rejected.
 - Frame size is bounded by the OIX one-time-prekey envelope limit.
-- Persistent sessions carry up to 100 sequential encrypted envelopes and signed receipts by default; the server can impose a lower per-connection message limit.\n- Each request is acknowledged before the next stream item is sent, applying natural application-level backpressure.\n- Idle sessions close after the configured idle timeout.
+- Persistent sessions carry up to 100 sequential encrypted envelopes and signed receipts by default; the server can impose a lower per-connection message limit.
+- Each request is acknowledged before the next stream item is sent, applying natural application-level backpressure.
+- Idle sessions close after the configured idle timeout.
 - Read/write timeouts, idle-session timeout, bounded per-connection message count, and bounded concurrent handler count.
 - Server binds to loopback by default; public binding is explicit opt-in.
 - TLS 1.2 minimum; certificate validation is mandatory on both sides.
