@@ -1,4 +1,6 @@
 import json
+import os
+import stat
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -124,3 +126,11 @@ def test_task_request_requires_explicit_capability():
     assert not policy.permits(None, message_type="task.request")
     assert policy.permits("public.research", message_type="task.request")
     assert not policy.permits("filesystem.write", message_type="task.request")
+
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX file modes are unavailable")
+def test_identity_private_key_is_created_owner_only(tmp_path):
+    generate_identity(tmp_path, "Permission Test Agent", [])
+    private_key = tmp_path / "private.key"
+    assert stat.S_IMODE(private_key.stat().st_mode) == 0o600
