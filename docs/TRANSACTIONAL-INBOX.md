@@ -41,3 +41,10 @@ The inbox is a single-host persistence component, not a distributed broker. Mult
 ## Read-only decision lookup
 
 `SQLiteInbox.get_work(work_id)` returns the durable inbound work record, including sender, message ID, message type, payload, status, creation time and operator decision timestamp. It is a read-only lookup intended for downstream integrations that must verify that a particular message was explicitly approved. It does not change the decision, execute the payload, or dispatch work. Unknown work IDs raise `WorkStateError`.
+
+
+## Peer revocation and outstanding work
+
+Revoking a trusted peer removes its local trust record and terminally changes that peer's not-yet-dispatched inbound work from pending approval, pending review, or approved to revoked. The original message remains in the inbox for audit. Re-trusting the same key does not reactivate old work; a new message and a new operator decision are required.
+
+Work already marked dispatched is not canceled by this local inbox operation. Downstream runtimes must enforce their own cancellation and revocation policy for work that has crossed the dispatch boundary. This is a local SQLite lifecycle guarantee, not a federated revocation propagation protocol.
