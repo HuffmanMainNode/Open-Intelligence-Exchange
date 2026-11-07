@@ -294,12 +294,29 @@ class SQLiteInbox:
         return agent_id
 
     def revoke_peer(self, agent_id: str) -> bool:
-        """Remove local trust. Previously received records remain for audit."""
+        """Remove local trust and terminally revoke work not yet dispatched.
+
+        Received messages remain available for audit. Pending and approved work
+        is invalidated so that restoring peer trust cannot silently reactivate
+        an earlier approval. Already-dispatched work is not canceled here.
+        """
+        if not isinstance(agent_id, str) or not agent_id:
+            raise ValueError("agent_id must be a non-empty string")
+        timestamp = int(time.time())
         with closing(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
             changed = db.execute(
                 "DELETE FROM trusted_peers WHERE agent_id=?", (agent_id,)
             ).rowcount
+            db.execute(
+                """
+                UPDATE inbound_work SET status='revoked',decided_at=?
+                WHERE sender=? AND status IN (
+                    'pending_approval','pending_review','approved'
+                )
+                """,
+                (timestamp, agent_id),
+            )
             db.commit()
         return bool(changed)
 

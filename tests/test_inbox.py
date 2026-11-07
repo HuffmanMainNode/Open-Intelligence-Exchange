@@ -113,6 +113,38 @@ def test_expired_message_and_revoked_peer_are_rejected(tmp_path):
         inbox.receive(valid)
 
 
+
+def test_peer_revocation_invalidates_pending_and_approved_work_permanently(tmp_path):
+    sender_key, sender_card = make_agent(tmp_path, "sender", ["public.research"])
+    database = tmp_path / "inbox.sqlite3"
+    inbox = SQLiteInbox(database, "local-agent", CapabilityPolicy({"public.research"}))
+    peer_id = inbox.trust_peer(sender_card)
+
+    pending_message = create_message(
+        sender_key, "local-agent", "task.request", {"task": "pending"},
+        capability="public.research",
+    )
+    approved_message = create_message(
+        sender_key, "local-agent", "task.request", {"task": "approved"},
+        capability="public.research",
+    )
+    pending = inbox.receive(pending_message)
+    approved = inbox.receive(approved_message)
+    assert inbox.decide_work(approved.work_id, approve=True, decided_at=123) == "approved"
+
+    assert inbox.revoke_peer(peer_id) is True
+    assert inbox.get_work(pending.work_id)["status"] == "revoked"
+    assert inbox.get_work(approved.work_id)["status"] == "revoked"
+    assert inbox.pending_work() == []
+    with pytest.raises(WorkStateError):
+        inbox.decide_work(approved.work_id, approve=True)
+
+    # Re-trusting the same key must not revive work approved before revocation.
+    inbox.trust_peer(sender_card)
+    assert inbox.pending_work() == []
+    assert inbox.get_work(approved.work_id)["status"] == "revoked"
+
+
 def test_operator_decision_is_durable_and_one_way(tmp_path):
     sender_key, sender_card = make_agent(tmp_path, "sender", ["public.research"])
     database = tmp_path / "inbox.sqlite3"
