@@ -48,3 +48,10 @@ The inbox is a single-host persistence component, not a distributed broker. Mult
 Revoking a trusted peer removes its local trust record and terminally changes that peer's not-yet-dispatched inbound work from pending approval, pending review, or approved to revoked. The original message remains in the inbox for audit. Re-trusting the same key does not reactivate old work; a new message and a new operator decision are required.
 
 Work already marked dispatched is not canceled by this local inbox operation. Downstream runtimes must enforce their own cancellation and revocation policy for work that has crossed the dispatch boundary. This is a local SQLite lifecycle guarantee, not a federated revocation propagation protocol.
+
+
+## Result outbox revocation
+
+When the shared OIX result outbox table is present, peer revocation also changes that peer's undelivered pending-approval, approved, and signed result records to rejected in the same SQLite transaction. The rejection reason is recorded as recipient peer revoked. A previously signed or encrypted result is no longer returned by pending-delivery queries, and re-trusting the peer does not restore it. Results already marked delivered remain historical delivery records.
+
+This is a local integration contract with the Open-Swarm result outbox. It does not retract a result already transmitted over a network, and it does not cancel an already-dispatched task.

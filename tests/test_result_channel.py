@@ -146,6 +146,64 @@ def test_rejected_result_cannot_be_signed_or_redecided(tmp_path):
         publisher.decide("task-123", approve=True)
 
 
+
+def test_peer_revocation_rejects_undelivered_result_outbox_entries(tmp_path):
+    local_key, local_card = _identity(tmp_path, "local")
+    _, peer_card = _identity(tmp_path, "peer")
+    database = tmp_path / "shared.sqlite3"
+    _result_database(
+        database,
+        sender=local_card["card"]["agent_id"],
+        peer=peer_card["card"]["agent_id"],
+    )
+    inbox = SQLiteInbox(database, local_card["card"]["agent_id"])
+    peer_id = inbox.trust_peer(peer_card)
+    publisher = SQLiteResultPublisher(
+        database, local_card["card"]["agent_id"], local_key
+    )
+
+    publisher.decide("task-123", approve=True)
+    signed = publisher.sign_approved("task-123")
+    assert publisher.pending_delivery()[0]["envelope"] == signed
+    with sqlite3.connect(database) as db:
+        db.execute(
+            """
+            INSERT INTO oix_result_outbox(
+                task_id,sender,request_message_id,terminal_status,payload_json,
+                status,created_at
+            ) VALUES(?,?,?,?,?,'pending_approval','2026-11-01T00:00:00+00:00')
+            """,
+            (
+                "task-pending", peer_card["card"]["agent_id"], "request-message-2",
+                "succeeded", json.dumps({"task_id": "task-pending"}),
+            ),
+        )
+
+    assert inbox.revoke_peer(peer_id) is True
+    with sqlite3.connect(database) as db:
+        statuses = dict(db.execute(
+            "SELECT task_id,status FROM oix_result_outbox"
+        ).fetchall())
+        reasons = {
+            row[0] for row in db.execute(
+                "SELECT rejection_reason FROM oix_result_outbox"
+            ).fetchall()
+        }
+    assert statuses == {"task-123": "rejected", "task-pending": "rejected"}
+    assert reasons == {"recipient peer revoked"}
+    assert publisher.pending_delivery() == []
+    with pytest.raises(ResultChannelError, match="operator-approved"):
+        publisher.sign_approved("task-pending")
+    with pytest.raises(ResultChannelError, match="not pending"):
+        publisher.decide("task-pending", approve=True)
+
+    # Restoring trust must not revive previously rejected result deliveries.
+    inbox.trust_peer(peer_card)
+    assert publisher.pending_delivery() == []
+    with pytest.raises(ResultChannelError, match="operator-approved"):
+        publisher.sign_approved("task-123")
+
+
 def test_delivery_acknowledgement_is_bound_to_persisted_message_id(tmp_path):
     local_key, local_card = _identity(tmp_path, "local")
     peer_key, peer_card = _identity(tmp_path, "peer")

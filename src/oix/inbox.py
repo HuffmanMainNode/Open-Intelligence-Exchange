@@ -13,7 +13,7 @@ import time
 import uuid
 from contextlib import closing
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -294,15 +294,17 @@ class SQLiteInbox:
         return agent_id
 
     def revoke_peer(self, agent_id: str) -> bool:
-        """Remove local trust and terminally revoke work not yet dispatched.
+        """Remove local trust and invalidate outstanding work and result delivery.
 
         Received messages remain available for audit. Pending and approved work
-        is invalidated so that restoring peer trust cannot silently reactivate
-        an earlier approval. Already-dispatched work is not canceled here.
+        is invalidated so restoring peer trust cannot silently reactivate an
+        earlier approval. Undelivered result outbox entries are rejected too.
+        Already-dispatched execution is not canceled here.
         """
         if not isinstance(agent_id, str) or not agent_id:
             raise ValueError("agent_id must be a non-empty string")
         timestamp = int(time.time())
+        decided_at = datetime.now(UTC).isoformat()
         with closing(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
             changed = db.execute(
@@ -317,6 +319,28 @@ class SQLiteInbox:
                 """,
                 (timestamp, agent_id),
             )
+            tables = {
+                row["name"] for row in db.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            if "oix_result_outbox" in tables:
+                columns = {
+                    row["name"] for row in db.execute(
+                        "PRAGMA table_info(oix_result_outbox)"
+                    ).fetchall()
+                }
+                required = {"sender", "status", "decided_at", "rejection_reason"}
+                if not required.issubset(columns):
+                    raise InboxError("OIX result outbox schema is incompatible")
+                db.execute(
+                    """
+                    UPDATE oix_result_outbox
+                    SET status='rejected',decided_at=?,rejection_reason=?
+                    WHERE sender=? AND status IN ('pending_approval','approved','signed')
+                    """,
+                    (decided_at, "recipient peer revoked", agent_id),
+                )
             db.commit()
         return bool(changed)
 
