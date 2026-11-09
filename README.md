@@ -75,7 +75,9 @@ python examples/agent_a.py
 python examples/multi_node_discovery_demo.py
 ```
 
-See [Mutual-TLS Transport](docs/MUTUAL-TLS-TRANSPORT.md) for the experimental TCP adapter, setup requirements, and security boundaries. The core library remains usable without network transport.\n\n## How an exchange works
+See [Mutual-TLS Transport](docs/MUTUAL-TLS-TRANSPORT.md) for the experimental TCP adapter, setup requirements, and security boundaries. The core library remains usable without network transport.
+
+## How an exchange works
 
 1. Each agent creates its own Ed25519 identity and signs its public agent card.
 2. The initiating agent checks the peer's advertised protocol version and required capability labels.
