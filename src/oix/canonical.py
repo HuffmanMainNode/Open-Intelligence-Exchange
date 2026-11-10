@@ -40,7 +40,6 @@ def _normalize(value: Any, depth: int = 0) -> Any:
     raise TypeError(f"unsupported JSON value: {type(value).__name__}")
 
 
-
 def decode_base64url(value: Any) -> bytes:
     """Decode canonical, unpadded base64url and reject ignored or noncanonical bytes."""
     alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
