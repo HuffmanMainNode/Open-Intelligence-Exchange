@@ -247,7 +247,7 @@ def test_decrypted_message_enters_normal_durable_oix_inbox(tmp_path):
 
 def test_identity_and_message_reject_noncanonical_base64url(tmp_path):
     _, sender_key, sender_card = _agent(tmp_path, "sender")
-    _, receiver_key, receiver_card = _agent(tmp_path, "receiver")
+    _, _receiver_key, receiver_card = _agent(tmp_path, "receiver")
 
     changed_signature = json.loads(json.dumps(sender_card))
     changed_signature["signature"] += "!"
@@ -273,7 +273,6 @@ def test_encryption_certificate_rejects_noncanonical_base64url(tmp_path):
     assert not verify_encryption_certificate(
         changed, signing_key.public_key().public_bytes_raw()
     )
-
 
 
 @pytest.mark.parametrize("value", ["A", "AB", "AA!", "AA="])
