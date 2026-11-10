@@ -21,7 +21,7 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 
-from .canonical import canonical_json
+from .canonical import canonical_json, decode_base64url
 from .identity import fingerprint, verify_card
 
 MAX_TTL_SECONDS = 3600
@@ -40,7 +40,7 @@ def _b64(data: bytes) -> str:
 
 
 def _unb64(value: str) -> bytes:
-    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+    return decode_base64url(value)
 
 
 def _validate_timestamp(value: Any, field: str) -> None:
