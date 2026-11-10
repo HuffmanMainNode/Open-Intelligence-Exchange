@@ -98,3 +98,10 @@ def test_expired_records_are_not_returned(tmp_path):
     store = SQLiteDiscoveryStore(tmp_path / "discovery.sqlite3")
     store.record(announcement(key, card, ttl=10), card, now=1_700_000_001)
     assert store.active(now=1_700_000_010) == []
+
+
+def test_announcement_rejects_noncanonical_base64url(tmp_path):
+    key, card = make_peer(tmp_path)
+    record = announcement(key, card)
+    record["signature"] += "!"
+    assert not verify_announcement(record, card, now=1_700_000_001)

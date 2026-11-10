@@ -12,7 +12,7 @@ from typing import Any
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 
-from .canonical import canonical_json
+from .canonical import canonical_json, decode_base64url
 from .identity import fingerprint
 
 MAX_MESSAGE_BYTES = 1_000_000
@@ -27,7 +27,7 @@ def _b64(data: bytes) -> str:
 
 
 def _unb64(value: str) -> bytes:
-    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+    return decode_base64url(value)
 
 
 def create_message(

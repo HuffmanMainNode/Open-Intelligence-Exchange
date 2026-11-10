@@ -5,6 +5,8 @@ Floats and non-string mapping keys are rejected to avoid ambiguous encodings.
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import unicodedata
 from typing import Any
@@ -36,6 +38,24 @@ def _normalize(value: Any, depth: int = 0) -> Any:
             normalized[key] = _normalize(item, depth + 1)
         return normalized
     raise TypeError(f"unsupported JSON value: {type(value).__name__}")
+
+
+def decode_base64url(value: Any) -> bytes:
+    """Decode canonical, unpadded base64url and reject ignored or noncanonical bytes."""
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    if not isinstance(value, str) or not value or len(value) % 4 == 1:
+        raise ValueError("base64url value must be a non-empty canonical string")
+    if any(character not in alphabet for character in value):
+        raise ValueError("base64url value contains a non-alphabet character")
+    try:
+        decoded = base64.b64decode(
+            value + "=" * (-len(value) % 4), altchars=b"-_", validate=True
+        )
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError("base64url value is malformed") from exc
+    if base64.urlsafe_b64encode(decoded).decode("ascii").rstrip("=") != value:
+        raise ValueError("base64url value is not canonically encoded")
+    return decoded
 
 
 def canonical_json(value: Any) -> bytes:

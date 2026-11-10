@@ -30,7 +30,7 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import (
 from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
-from .canonical import canonical_json
+from .canonical import canonical_json, decode_base64url
 from .envelope import MAX_MESSAGE_BYTES, verify_for_recipient
 from .identity import fingerprint
 from .receipts import create_delivery_receipt, message_digest, verify_delivery_receipt
@@ -53,7 +53,7 @@ def _unb64(value: str) -> bytes:
     if not isinstance(value, str) or not value:
         raise PreKeyError("base64 field must be a non-empty string")
     try:
-        return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+        return decode_base64url(value)
     except (ValueError, binascii.Error) as exc:
         raise PreKeyError("invalid base64 field") from exc
 
@@ -336,7 +336,7 @@ class SQLitePreKeyStore:
         inbox: Any | None = None,
     ) -> dict[str, Any]:
         """Decrypt and consume a prekey, optionally accepting into a shared inbox."""
-        inner, _ = self._consume(
+        inner, _, _ = self._consume(
             secure_envelope,
             recipient_signing_public_key,
             sender_signing_public_key,
@@ -357,7 +357,7 @@ class SQLitePreKeyStore:
         now: int | None = None,
     ) -> tuple[dict[str, Any], Any]:
         """Atomically consume the prekey and accept the message into the same SQLite inbox."""
-        inner = self.consume_and_decrypt(
+        inner, _, receipt = self._consume(
             secure_envelope,
             recipient_signing_public_key,
             sender_signing_public_key,
@@ -365,7 +365,8 @@ class SQLitePreKeyStore:
             now=now,
             inbox=inbox,
         )
-        receipt = inbox.receive(inner, now=now)
+        if receipt is None:
+            raise PreKeyError("inbox acceptance receipt was not created")
         return inner, receipt
 
     def consume_and_acknowledge(
@@ -380,7 +381,7 @@ class SQLitePreKeyStore:
         now: int | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         """Atomically accept, consume, and persist a signed receipt for retry-safe transport."""
-        inner, receipt = self._consume(
+        inner, receipt, _ = self._consume(
             secure_envelope,
             recipient_signing_public_key,
             sender_signing_public_key,
@@ -403,7 +404,7 @@ class SQLitePreKeyStore:
         now: int | None = None,
         inbox: Any | None = None,
         receipt_signing_private_key: Ed25519PrivateKey | None = None,
-    ) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    ) -> tuple[dict[str, Any], dict[str, Any] | None, Any | None]:
         current = int(time.time()) if now is None else now
         if inbox is not None and Path(inbox.database).resolve() != Path(self.database).resolve():
             raise PreKeyError("prekey store and inbox must share the same SQLite database")
@@ -496,7 +497,7 @@ class SQLitePreKeyStore:
                             ),
                         )
                     db.commit()
-                    return inner, receipt
+                    return inner, receipt, None
 
             row = db.execute(
                 "SELECT private_key,public_key,expires_at,status "
@@ -540,8 +541,9 @@ class SQLitePreKeyStore:
                 )
             ):
                 raise PreKeyError("inner OIX signature, sender, or recipient validation failed")
+            inbox_receipt = None
             if inbox is not None:
-                inbox.receive(inner, now=current, connection=db)
+                inbox_receipt = inbox.receive(inner, now=current, connection=db)
 
             receipt: dict[str, Any] | None = None
             if receipt_signing_private_key is not None:
@@ -570,4 +572,4 @@ class SQLitePreKeyStore:
                 (header["prekey_id"],),
             )
             db.commit()
-            return inner, receipt
+            return inner, receipt, inbox_receipt

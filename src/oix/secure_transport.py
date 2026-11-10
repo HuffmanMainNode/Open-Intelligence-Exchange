@@ -27,7 +27,7 @@ from cryptography.hazmat.primitives.asymmetric.x25519 import (
 from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
-from .canonical import canonical_json
+from .canonical import canonical_json, decode_base64url
 from .envelope import MAX_MESSAGE_BYTES, verify_for_recipient
 from .identity import fingerprint
 
@@ -56,7 +56,7 @@ def _unb64(value: str) -> bytes:
     if not isinstance(value, str) or not value:
         raise SecureEnvelopeError("base64 field must be a non-empty string")
     try:
-        return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+        return decode_base64url(value)
     except (ValueError, binascii.Error) as exc:
         raise SecureEnvelopeError("invalid base64 field") from exc
 

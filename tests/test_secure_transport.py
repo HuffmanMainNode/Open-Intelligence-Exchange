@@ -4,8 +4,9 @@ import stat
 
 import pytest
 
-from oix.envelope import create_message
-from oix.identity import generate_identity, load_private_key
+from oix.canonical import decode_base64url
+from oix.envelope import create_message, verify_message
+from oix.identity import generate_identity, load_private_key, verify_card
 from oix.secure_transport import (
     SecureEnvelopeError,
     decrypt_envelope,
@@ -242,3 +243,39 @@ def test_decrypted_message_enters_normal_durable_oix_inbox(tmp_path):
     assert receipt.message_type == "task.request"
     assert receipt.work_status == "pending_approval"
     assert inbox.pending_work()[0]["payload"]["task"] == "summarize public advisories"
+
+
+def test_identity_and_message_reject_noncanonical_base64url(tmp_path):
+    _, sender_key, sender_card = _agent(tmp_path, "sender")
+    _, _receiver_key, receiver_card = _agent(tmp_path, "receiver")
+
+    changed_signature = json.loads(json.dumps(sender_card))
+    changed_signature["signature"] += "!"
+    assert not verify_card(changed_signature)
+
+    changed_public_key = json.loads(json.dumps(sender_card))
+    changed_public_key["card"]["public_key"] += "!"
+    assert not verify_card(changed_public_key)
+
+    message = create_message(
+        sender_key, receiver_card["card"]["agent_id"], "agent.hello", {}
+    )
+    message["signature"] += "!"
+    assert not verify_message(message, sender_key.public_key().public_bytes_raw())
+
+
+def test_encryption_certificate_rejects_noncanonical_base64url(tmp_path):
+    _, signing_key, _ = _agent(tmp_path, "receiver")
+    directory = tmp_path / "receiver"
+    certificate = generate_encryption_key(directory, signing_key)
+    changed = json.loads(json.dumps(certificate))
+    changed["signature"] += "!"
+    assert not verify_encryption_certificate(
+        changed, signing_key.public_key().public_bytes_raw()
+    )
+
+
+@pytest.mark.parametrize("value", ["A", "AB", "AA!", "AA="])
+def test_decode_base64url_rejects_invalid_or_noncanonical_values(value):
+    with pytest.raises(ValueError):
+        decode_base64url(value)
