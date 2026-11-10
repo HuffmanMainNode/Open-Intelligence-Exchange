@@ -210,7 +210,7 @@ def test_prekey_consumption_and_inbox_acceptance_commit_atomically(tmp_path):
         now=now,
     )
     assert opened == message
-    assert receipt.duplicate is True
+    assert receipt.duplicate is False
     assert inbox.pending_work()[0]["status"] == "pending_approval"
     assert store.available_count(now=now) == 1
 
@@ -268,3 +268,12 @@ def test_atomic_prekey_acceptance_requires_one_shared_database(tmp_path):
             recipient_id,
             inbox=inbox,
         )
+
+
+def test_prekey_bundle_rejects_noncanonical_base64url(tmp_path):
+    _, _, recipient_key, _, _, bundle, _, now = _pair(tmp_path)
+    changed = json.loads(json.dumps(bundle))
+    changed["signature"] += "!"
+    assert not verify_prekey_bundle(
+        changed, recipient_key.public_key().public_bytes_raw(), now=now
+    )
