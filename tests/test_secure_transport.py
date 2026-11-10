@@ -4,6 +4,7 @@ import stat
 
 import pytest
 
+from oix.canonical import decode_base64url
 from oix.envelope import create_message, verify_message
 from oix.identity import generate_identity, load_private_key, verify_card
 from oix.secure_transport import (
@@ -272,3 +273,10 @@ def test_encryption_certificate_rejects_noncanonical_base64url(tmp_path):
     assert not verify_encryption_certificate(
         changed, signing_key.public_key().public_bytes_raw()
     )
+
+
+
+@pytest.mark.parametrize("value", ["A", "AB", "AA!", "AA="])
+def test_decode_base64url_rejects_invalid_or_noncanonical_values(value):
+    with pytest.raises(ValueError):
+        decode_base64url(value)
